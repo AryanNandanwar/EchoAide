@@ -374,7 +374,7 @@ export default function ClinicalNoteViewer({
     const payload = ident;
 
 
-    const resp = await api.post("/doctor/me/patients/matches/preview", payload, {
+    const resp = await api.post("/api/doctor/me/patients/matches/preview", payload, {
       headers: { "Content-Type": "application/json" },
     });
 
@@ -412,7 +412,7 @@ export default function ClinicalNoteViewer({
 
     // console.log("payload before POST", payload)
 
-    const resp = await api.post("/doctor/me/patients", payload);
+    const resp = await api.post("/api/doctor/me/patients", payload);
     return resp.data as Patient;
   };
 
@@ -513,7 +513,7 @@ export default function ClinicalNoteViewer({
       const payload = buildClinicalNotePayload(parsedContent, source, { patientId });
 
       // Always create a new note
-      const resp = await api.post("/clinical-notes", payload);
+      const resp = await api.post("/api/clinical-notes", payload);
 
       const data = resp.data;
       const id = data._id ?? data.id ?? null;
@@ -571,7 +571,7 @@ export default function ClinicalNoteViewer({
 
         console.log("Saving clinical note (no patient details) payload:", payload);
 
-        const resp = await api.post("/clinical-notes", payload);
+        const resp = await api.post("/api/clinical-notes", payload);
 
         const data = resp.data;
         const id = data._id ?? data.id ?? null;

@@ -44,7 +44,7 @@ export default function Login({ onSubmit }: Props) {
     setLoading(true);
     try {
       // call your backend login endpoint - change path if your API differs
-      const resp = await api.post("/auth/login", {
+      const resp = await api.post("/api/auth/login", {
         email,
         password,
       });

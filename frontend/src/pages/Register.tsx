@@ -92,7 +92,7 @@ export default function Register({ onSuccess }: Props) {
   const onSubmit: SubmitHandler<FormValues> = async (data) => {
     setServerError(null);
     try {
-      const resp = await api.post('/auth/signup', {
+      const resp = await api.post('/api/auth/signup', {
         fullName: data.fullName, // backend expects `name`
         email: data.email,
         password: data.password,

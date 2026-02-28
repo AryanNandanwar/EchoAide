@@ -32,7 +32,7 @@ export default function PatientsPage() {
   const [sortOrder, setSortOrder] = useState<"latest" | "oldest">("latest");
 
   useEffect(() => {
-    api.get("/doctor/me/patients")
+    api.get("/api/doctor/me/patients")
       .then((res) => {
         setPatients(res.data);
       })

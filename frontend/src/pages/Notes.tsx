@@ -44,7 +44,7 @@ export default function NotesPage() {
   const [sortOrder, setSortOrder] = useState<"latest" | "earliest">("latest");
 
   useEffect(() => {
-    api.get("/clinical-notes")
+    api.get("/api/clinical-notes")
       .then((res) => setNotes(res.data))
       .finally(() => setLoading(false));
   }, []);
