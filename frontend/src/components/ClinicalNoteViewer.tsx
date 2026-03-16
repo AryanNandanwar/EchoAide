@@ -418,19 +418,7 @@ export default function ClinicalNoteViewer({
   };
 
   // helper: convert parsed note into DB-friendly text fields
-  const stringifyKV = (kv?: Record<string, string> | undefined): string => {
-    if (!kv || Object.keys(kv).length === 0) return "";
-    return Object.entries(kv)
-      .map(([k, v]) => `${k}: ${v}`)
-      .join("\n");
-  };
-
-  const joinList = (arr?: string[] | string | undefined): string => {
-    if (!arr) return "";
-    if (Array.isArray(arr)) return arr.join("\n");
-    return String(arr);
-  };
-
+  
   const handleCreateFromNoPatientDialog = async (payload: { fullName?: string; age?: string | number; phone?: string; gender?: string }) => {
   setCreatingFromNoPatientDialog(true);
   setError(null);
@@ -464,17 +452,9 @@ export default function ClinicalNoteViewer({
 
   const buildClinicalNotePayload = (
     parsedContent: ParsedNote,
-    sourceValue: string,
+    _sourceValue: string,
     opts?: { patientId?: string | null }
   ) => {
-    const pdText = stringifyKV(parsedContent.patientDetails);
-    const mhText = joinList(parsedContent.medicalHistory);
-    const pfText =
-      parsedContent.problemFaced && Array.isArray(parsedContent.problemFaced)
-        ? joinList(parsedContent.problemFaced)
-        : (parsedContent.problemFaced as string) || "";
-    const diText = joinList(parsedContent.doctorInstructions);
-    const mpText = joinList(parsedContent.medicationPrescribed);
 
     const payload: any = {
       // DB fields your backend expects (text/arrays)
