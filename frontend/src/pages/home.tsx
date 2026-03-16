@@ -1,5 +1,5 @@
 // pages/HomePage.tsx
-import  { useState } from "react";
+import  { useState, useEffect } from "react";
 import ResponsiveAppBar from "../components/navbar.tsx";
 import AudioRecorder from "../components/transcribeBar.tsx";
 import ClinicalNoteViewer from "../components/ClinicalNoteViewer.tsx";
@@ -105,6 +105,93 @@ async function resolveOutputNote({
 
 export default function HomePage() {
   const [noteSource, setNoteSource] = useState<string | null>(null);
+  const [isGeneratingNote, setIsGeneratingNote] = useState(false);
+  const [isNoteReady, setIsNoteReady] = useState(false);
+  const [generatingFilename, setGeneratingFilename] = useState<string | null>(null);
+
+  // Load persisted state on component mount
+  useEffect(() => {
+    const persistedNoteSource = sessionStorage.getItem('pendingNoteSource');
+    const persistedIsNoteReady = sessionStorage.getItem('isNoteReady');
+    const persistedIsGenerating = sessionStorage.getItem('isGeneratingNote');
+    const persistedGeneratingFilename = sessionStorage.getItem('generatingFilename');
+    
+    if (persistedNoteSource) {
+      setNoteSource(persistedNoteSource);
+    }
+    if (persistedIsNoteReady === 'true') {
+      setIsNoteReady(true);
+    }
+    if (persistedIsGenerating === 'true' && persistedGeneratingFilename) {
+      setIsGeneratingNote(true);
+      setGeneratingFilename(persistedGeneratingFilename);
+      // Resume note generation process
+      resumeNoteGeneration(persistedGeneratingFilename);
+    }
+  }, []);
+
+  // Save state to sessionStorage whenever it changes
+  useEffect(() => {
+    if (noteSource) {
+      sessionStorage.setItem('pendingNoteSource', noteSource);
+    } else {
+      sessionStorage.removeItem('pendingNoteSource');
+    }
+  }, [noteSource]);
+
+  useEffect(() => {
+    sessionStorage.setItem('isNoteReady', isNoteReady.toString());
+  }, [isNoteReady]);
+
+  useEffect(() => {
+    sessionStorage.setItem('isGeneratingNote', isGeneratingNote.toString());
+    if (generatingFilename) {
+      sessionStorage.setItem('generatingFilename', generatingFilename);
+    } else {
+      sessionStorage.removeItem('generatingFilename');
+    }
+  }, [isGeneratingNote, generatingFilename]);
+
+  const clearPersistedNote = () => {
+    sessionStorage.removeItem('pendingNoteSource');
+    sessionStorage.removeItem('isNoteReady');
+    sessionStorage.removeItem('isGeneratingNote');
+    sessionStorage.removeItem('generatingFilename');
+    setNoteSource(null);
+    setIsNoteReady(false);
+    setIsGeneratingNote(false);
+    setGeneratingFilename(null);
+  };
+
+  const resumeNoteGeneration = async (filename: string) => {
+    try {
+      const resolved = await resolveOutputNote({
+        apiBase: API_BASE,
+        filename,
+        timeoutMs: 10 * 60 * 1000, // 5 minutes
+        intervalMs: 200000,  // 2s initial poll
+      });
+
+      console.log("Resumed note generation completed:", resolved);
+
+      if (!resolved) {
+        console.warn("No processed note found for", filename);
+        setIsGeneratingNote(false);
+        setGeneratingFilename(null);
+        return;
+      }
+
+      setNoteSource(resolved.key);
+      setIsGeneratingNote(false);
+      setIsNoteReady(true);
+      setGeneratingFilename(null);
+      console.log("Displaying note from key:", resolved.key);
+    } catch (err) {
+      console.error("Error in resumed note generation:", err);
+      setIsGeneratingNote(false);
+      setGeneratingFilename(null);
+    }
+  };
 
   /** Your API Gateway base (no trailing slash) */
   const API_BASE = import.meta.env.VITE_API_GATEWAY_BASE_URL
@@ -139,6 +226,9 @@ export default function HomePage() {
     }
 
     setNoteSource(null); // reset viewer while resolving
+    setIsGeneratingNote(true);
+    setIsNoteReady(false);
+    setGeneratingFilename(filename);
 
     try {
       const resolved = await resolveOutputNote({
@@ -154,6 +244,8 @@ export default function HomePage() {
 
       if (!resolved) {
         console.warn("No processed note found for", filename);
+        setIsGeneratingNote(false);
+        setGeneratingFilename(null);
         return;
       }
 
@@ -161,10 +253,24 @@ export default function HomePage() {
       //If using key, set noteSource to resolved.key instead
       //If using URL, set noteSource to resolved.url
       setNoteSource(resolved.key);
+      setIsGeneratingNote(false);
+      setIsNoteReady(true);
+      setGeneratingFilename(null);
       console.log("Displaying note from key:", noteSource);
     } catch (err) {
       console.error("Error resolving processed note:", err);
+      setIsGeneratingNote(false);
+      setGeneratingFilename(null);
     }
+  };
+
+  const handleNoteSaved = () => {
+    setIsNoteReady(false);
+    clearPersistedNote();
+  };
+
+  const handleNoteDiscarded = () => {
+    clearPersistedNote();
   };
 
   return (
@@ -191,6 +297,8 @@ export default function HomePage() {
               presignEndpoint={API_BASE}
               autoPoll={false}
               className="w-full h-full mt-6"
+              onNoteSaved={handleNoteSaved}
+              onNoteDiscarded={handleNoteDiscarded}
             />
           ) : (
             <div className="mt-6 text-sm text-gray-500 max-w-3xl mx-auto text-left px-4 md:px-8">
@@ -204,6 +312,9 @@ export default function HomePage() {
       <AudioRecorder
         getPresignedUrl={fetchPresignedUrl}
         onUploadComplete={handleUploadComplete}
+        isGeneratingNote={isGeneratingNote}
+        isNoteReady={isNoteReady}
+        onNoteSaved={handleNoteSaved}
       />
     </div>
   );

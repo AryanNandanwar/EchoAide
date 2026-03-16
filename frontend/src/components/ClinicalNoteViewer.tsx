@@ -24,6 +24,7 @@ import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import SaveIcon from "@mui/icons-material/Save";
 import EditIcon from "@mui/icons-material/Edit";
+import DeleteIcon from "@mui/icons-material/Delete";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import api from "../lib/api";
@@ -37,6 +38,8 @@ type Props = {
   autoPoll?: boolean;
   pollTimeoutMs?: number;
   className?: string;
+  onNoteSaved?: () => void;
+  onNoteDiscarded?: () => void;
 };
 
 type ParsedNote = {
@@ -56,6 +59,8 @@ export default function ClinicalNoteViewer({
   autoPoll = false,
   pollTimeoutMs = 60_000,
   className,
+  onNoteSaved,
+  onNoteDiscarded,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [noteText, setNoteText] = useState<string | null>(null);
@@ -85,6 +90,9 @@ export default function ClinicalNoteViewer({
 
   // Reset confirm dialog
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+
+  // Discard note confirm dialog
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
 
   // optional: disable confirm while resetting
   const [resetting, setResetting] = useState(false);
@@ -442,6 +450,7 @@ export default function ClinicalNoteViewer({
 
     // optionally show toast (if you use showToast)
     if (typeof showToast === "function") showToast("Note saved and attached to newly created patient.", "success");
+    onNoteSaved?.();
   } catch (err: any) {
     setError(err?.response?.data?.message ?? err.message ?? "Failed to create patient and save");
   } finally {
@@ -500,6 +509,7 @@ export default function ClinicalNoteViewer({
       if (data.parsed) setParsed(data.parsed);
       showToast("Note saved successfully.", "success");
       setEditMode(false);
+      onNoteSaved?.();
     } catch (err: any) {
       setError(err?.response?.data?.message ?? err.message ?? "Failed to save note");
     } finally {
@@ -557,6 +567,7 @@ export default function ClinicalNoteViewer({
         if (data.raw) setNoteText(data.raw);
         if (data.parsed) setParsed(data.parsed);
         setEditMode(false);
+        onNoteSaved?.();
 
       }
     } catch (err: any) {
@@ -645,6 +656,16 @@ export default function ClinicalNoteViewer({
     } finally {
       setResetting(false);
     }
+  };
+
+  const handleDiscardNote = () => {
+    setConfirmDiscardOpen(true);
+  };
+
+  const handleConfirmDiscard = () => {
+    setConfirmDiscardOpen(false);
+    onNoteDiscarded?.();
+    showToast("Note discarded.", "info");
   };
 
   // helpers for editing parsed fields
@@ -992,6 +1013,10 @@ export default function ClinicalNoteViewer({
                 {saving ? <CircularProgress size={16} /> : "Save"}
               </Button>
 
+              <Button size="small" variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={handleDiscardNote} disabled={saving}>
+                Discard Note
+              </Button>
+
               <Button size="small" variant="outlined" startIcon={<FileDownloadIcon />} onClick={handleDownload} disabled={!noteText}>
                 Download
               </Button>
@@ -1122,6 +1147,17 @@ export default function ClinicalNoteViewer({
       loading={creatingFromNoPatientDialog}
       title="No patient found"
       description="No existing patient matched the extracted details. Edit these details to create a new patient and attach the note."
+    />
+
+    {/* Discard Note Confirmation Dialog */}
+    <ConfirmDialog
+      open={confirmDiscardOpen}
+      title="Discard Note?"
+      description="Are you sure you want to discard this note? This action cannot be undone."
+      confirmLabel="Discard"
+      cancelLabel="Cancel"
+      onConfirm={handleConfirmDiscard}
+      onCancel={() => setConfirmDiscardOpen(false)}
     />
 
 

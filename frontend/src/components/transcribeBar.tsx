@@ -14,12 +14,18 @@ interface AudioRecorderProps {
   onUploadComplete?: (s3Url: string) => void;
   onError?: (error: string) => void;
   getPresignedUrl: (filename: string) => Promise<string>;
+  isGeneratingNote?: boolean;
+  isNoteReady?: boolean;
+  onNoteSaved?: () => void;
 }
 
 export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   onUploadComplete,
   onError,
   getPresignedUrl,
+  isGeneratingNote = false,
+  isNoteReady = false
+
 }) => {
   const waveformRef = useRef<HTMLDivElement>(null);
   const waveSurferRef = useRef<WaveSurfer | null>(null);
@@ -487,7 +493,14 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         )}
 
         <div className="flex items-center justify-center gap-4">
-          {!recordedBlob && isAuthenticated ? (
+          {isGeneratingNote ? (
+            <div className="flex flex-col items-center gap-2">
+              <div className="flex items-center gap-2">
+                <CircularProgress size={24} />
+                <span className="text-sm text-gray-600">Getting your note ready, hang on...</span>
+              </div>
+            </div>
+          ) : !recordedBlob && isAuthenticated ? (
             <>
               {/* NEW: Upload button */}
               <Button
@@ -495,6 +508,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                 startIcon={<UploadFileIcon />}
                 onClick={() => fileInputRef.current?.click()}
                 sx={{ textTransform: "none" }}
+                disabled={isNoteReady}
               >
                 Upload Audio
               </Button>
@@ -515,6 +529,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                   startIcon={<MicIcon />}
                   onClick={handleStartRecording}
                   className="normal-case"
+                  disabled={isNoteReady}
                 >
                   Start Recording
                 </Button>
@@ -566,8 +581,13 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                 </div>
               )}
             </>
-          ) : (
+          ) : recordedBlob && !isGeneratingNote ? (
             <>
+              {isNoteReady && (
+                <div className="text-center text-sm text-green-600 mb-2">
+                  Note is ready! Save it to record another.
+                </div>
+              )}
               <Button
                 variant="contained"
                 color="success"
@@ -577,10 +597,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                   // addDebugLog('Current state - isRecording: ' + isRecording);
                   // addDebugLog('Current state - isAuthenticated: ' + isAuthenticated);
                   // addDebugLog('Current state - isUploading: ' + isUploading);
-                  alert('Generate Note button clicked! Check debug logs below.');
+                 
                   handleUploadToS3();
                 }}
-                disabled={isUploading}
+                disabled={isUploading || isNoteReady}
                 className="normal-case"
               >
                 {isUploading ? (
@@ -593,11 +613,11 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                 )}
               </Button>
 
-              <Button variant="outlined" onClick={handleDiscard} className="normal-case">
+              <Button variant="outlined" onClick={handleDiscard} className="normal-case" disabled={isNoteReady}>
                 Discard
               </Button>
             </>
-          )}
+          ) : null}
         </div>
 
         {isRecording && (
