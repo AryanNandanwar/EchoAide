@@ -20,6 +20,7 @@ import {
   IconButton,
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import SaveIcon from "@mui/icons-material/Save";
 import EditIcon from "@mui/icons-material/Edit";
@@ -476,15 +477,12 @@ export default function ClinicalNoteViewer({
     const mpText = joinList(parsedContent.medicationPrescribed);
 
     const payload: any = {
-      source: sourceValue,
-      raw: parsedContent.raw ?? "",
-      parsed: parsedContent, // keep original parsed for convenience (optional)
-      // DB fields your backend expects (text)
-      patientDetails: pdText,
-      medicalHistory: mhText,
-      problemFaced: pfText,
-      doctorInstructions: diText,
-      medicationPrescribed: mpText,
+      // DB fields your backend expects (text/arrays)
+      patientDetails: parsedContent.patientDetails || {},
+      medicalHistory: Array.isArray(parsedContent.medicalHistory) ? parsedContent.medicalHistory : (parsedContent.medicalHistory ? [parsedContent.medicalHistory] : []),
+      problemFaced: Array.isArray(parsedContent.problemFaced) ? parsedContent.problemFaced : (parsedContent.problemFaced ? [parsedContent.problemFaced] : []),
+      doctorInstructions: Array.isArray(parsedContent.doctorInstructions) ? parsedContent.doctorInstructions : (parsedContent.doctorInstructions ? [parsedContent.doctorInstructions] : []),
+      medicationPrescribed: Array.isArray(parsedContent.medicationPrescribed) ? parsedContent.medicationPrescribed : (parsedContent.medicationPrescribed ? [parsedContent.medicationPrescribed] : []),
     };
 
     if (opts?.patientId) payload.patientId = opts.patientId;
@@ -625,6 +623,34 @@ export default function ClinicalNoteViewer({
   const handleCopy = async () => {
     if (!noteText) return;
     await navigator.clipboard.writeText(noteText);
+  };
+
+  const handlePdfDownload = async () => {
+    if (!_savedNoteId) {
+      showToast("Please save the note first before generating PDF", "warning");
+      return;
+    }
+    
+    try {
+      const response = await api.get(`/api/clinical-notes/${_savedNoteId}/pdf`, {
+        responseType: 'blob'
+      });
+      
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `clinical_note_${_savedNoteId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      showToast("PDF downloaded successfully", "success");
+    } catch (error: any) {
+      setError(error?.response?.data?.message ?? "Failed to generate PDF");
+      showToast("Failed to generate PDF", "error");
+    }
   };
 
   const handleConfirmReset = async () => {
@@ -837,7 +863,7 @@ export default function ClinicalNoteViewer({
   return (
     <div className="w-full min-h-screen bg-slate-50 flex flex-col">
       <Card className={`${className ?? "w-full mx-auto my-0"} shadow-none border-none`}>
-        <CardContent className="flex flex-col p-6">
+        <CardContent className="flex flex-col p-4 md:p-6">
           {/* Header (centered at top) */}
           <header className="flex-shrink-0">
             <Typography variant="h5" align="center" className="font-semibold">
@@ -847,12 +873,12 @@ export default function ClinicalNoteViewer({
 
           {/* Main content: stretches and scrolls */}
           <main className="flex-grow mt-4">
-            {/* 2 equal columns on md+ screens */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 min-h-[600px]">
+            {/* 2 equal columns on md+ screens, single column on mobile */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 min-h-[400px] md:min-h-[600px]">
               {/* Left column */}
               <div className="space-y-6">
                 {/* Patient Details */}
-                <div className="rounded-lg border p-4 bg-white">
+                <div className="rounded-lg border p-3 md:p-4 bg-white">
                   <div className="flex items-center justify-between">
                     <Typography variant="subtitle2" className="text-slate-700">
                       Patient Details
@@ -872,7 +898,7 @@ export default function ClinicalNoteViewer({
                 </div>
 
                 {/* Medical History */}
-                <div className="rounded-lg border p-4 bg-white">
+                <div className="rounded-lg border p-3 md:p-4 bg-white">
                   <Typography variant="subtitle2" className="text-slate-700">
                     Medical History
                   </Typography>
@@ -887,7 +913,7 @@ export default function ClinicalNoteViewer({
                 </div>
 
                {/* Problem Faced */}
-                <div className="rounded-lg border p-4 bg-white">
+                <div className="rounded-lg border p-3 md:p-4 bg-white">
                   <Typography variant="subtitle2" className="text-slate-700">
                     Problem Faced
                   </Typography>
@@ -909,7 +935,7 @@ export default function ClinicalNoteViewer({
 
               {/* Right column */}
               <div className="space-y-6">
-                <div className="rounded-lg border p-4 bg-white">
+                <div className="rounded-lg border p-3 md:p-4 bg-white">
                   <div className="flex items-center justify-between">
                     <Typography variant="subtitle2" className="text-slate-700">
                       Doctor Instructions
@@ -933,7 +959,7 @@ export default function ClinicalNoteViewer({
                   )}
                 </div>
 
-                <div className="rounded-lg border p-4 bg-white">
+                <div className="rounded-lg border p-3 md:p-4 bg-white">
                   <div className="flex items-center justify-between">
                     <Typography variant="subtitle2" className="text-slate-700">
                       Medication Prescribed
@@ -962,35 +988,39 @@ export default function ClinicalNoteViewer({
 
 
           {/* Footer: fixed action row at bottom (always visible) */}
-          <footer className="flex-shrink-0 mt-4 pt-4 border-t -mx-6 px-6 pb-6 bg-white">
-            <div className="max-w-6xl mx-auto flex items-center justify-center gap-4">
-              <Button size="medium" variant={editMode ? "outlined" : "contained"} startIcon={<EditIcon />} onClick={() => setEditMode((v) => !v)}>
+          <footer className="flex-shrink-0 mt-4 pt-4 border-t -mx-4 md:-mx-6 px-4 md:px-6 pb-4 md:pb-6 bg-white">
+            <div className="max-w-6xl mx-auto flex items-center justify-center gap-2 sm:gap-3 md:gap-4 flex-wrap">
+              <Button size="small" variant={editMode ? "outlined" : "contained"} startIcon={<EditIcon />} onClick={() => setEditMode((v) => !v)}>
                 {editMode ? "Exit Edit" : "Edit"}
               </Button>
 
               {/* Apply / Reset only visible in edit mode */}
               {editMode && (
                 <>
-                  <Button size="medium" variant="outlined" onClick={applyChanges} disabled={loading}>
+                  <Button size="small" variant="outlined" onClick={applyChanges} disabled={loading}>
                     Apply changes
                   </Button>
 
-                  <Button size="medium" variant="outlined" onClick={() => setConfirmResetOpen(true)} disabled={loading}>
+                  <Button size="small" variant="outlined" onClick={() => setConfirmResetOpen(true)} disabled={loading}>
                     Reset
                   </Button>
                 </>
               )}
 
 
-              <Button size="medium" variant="contained" color="primary" startIcon={<SaveIcon />} onClick={saveNote} disabled={saving || (!editState.raw && !editState.parsed)}>
-                {saving ? <CircularProgress size={18} /> : "Save"}
+              <Button size="small" variant="contained" color="primary" startIcon={<SaveIcon />} onClick={saveNote} disabled={saving || (!editState.raw && !editState.parsed)}>
+                {saving ? <CircularProgress size={16} /> : "Save"}
               </Button>
 
-              <Button size="medium" variant="outlined" startIcon={<FileDownloadIcon />} onClick={handleDownload} disabled={!noteText}>
+              <Button size="small" variant="outlined" startIcon={<FileDownloadIcon />} onClick={handleDownload} disabled={!noteText}>
                 Download
               </Button>
 
-              <Button size="medium" variant="outlined" startIcon={<ContentCopyIcon />} onClick={handleCopy} disabled={!noteText}>
+              <Button size="small" variant="outlined" color="secondary" startIcon={<PictureAsPdfIcon />} onClick={handlePdfDownload} disabled={!_savedNoteId}>
+                Download PDF
+              </Button>
+
+              <Button size="small" variant="outlined" startIcon={<ContentCopyIcon />} onClick={handleCopy} disabled={!noteText}>
                 Copy
               </Button>
             </div>

@@ -38,5 +38,4 @@ export class CreateClinicalNoteDto {
   medicationPrescribed?: string[];
 
   patientId: string;
-  doctorId: string;
 }

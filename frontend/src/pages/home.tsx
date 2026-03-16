@@ -110,8 +110,7 @@ export default function HomePage() {
   const API_BASE = import.meta.env.VITE_API_GATEWAY_BASE_URL
 
   /** PreSign endpoint to upload audio to S3 */
-  const fetchPresignedUrl = async (): Promise<string> => {
-    const filename = `audio-${Date.now()}-${Math.random().toString(36).substring(2, 15)}.wav`;
+  const fetchPresignedUrl = async (filename: string): Promise<string> => {
     const base = import.meta.env.VITE_AWS_PRESIGN_S3_URL
     const url = `${base}/PreSign?filename=${encodeURIComponent(filename)}`;
     const response = await axios.get(url);

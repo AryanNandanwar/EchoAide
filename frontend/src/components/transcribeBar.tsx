@@ -11,7 +11,7 @@ import { useNavigate } from "react-router-dom";
 interface AudioRecorderProps {
   onUploadComplete?: (s3Url: string) => void;
   onError?: (error: string) => void;
-  getPresignedUrl: () => Promise<string>;
+  getPresignedUrl: (filename: string) => Promise<string>;
 }
 
 export const AudioRecorder: React.FC<AudioRecorderProps> = ({
@@ -35,6 +35,32 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   const navigate = useNavigate();
+
+  
+  const mimeToExtension = (mimeType?: string): string => {
+    const lower = (mimeType || "").toLowerCase();
+    if (lower.includes("wav")) return "wav";
+    if (lower.includes("mpeg") || lower.includes("mp3")) return "mp3";
+    if (lower.includes("mp4") || lower.includes("m4a")) return "m4a";
+    if (lower.includes("flac")) return "flac";
+    if (lower.includes("webm")) return "webm";
+    if (lower.includes("ogg")) return "ogg";
+    return "wav";
+  };
+
+  const buildUploadFilename = (): string => {
+    const random = Math.random().toString(36).substring(2, 15);
+
+    if (recordedBlob instanceof File && recordedBlob.name) {
+      const extension = recordedBlob.name.split(".").pop()?.toLowerCase();
+      if (extension) {
+        return `audio-${Date.now()}-${random}.${extension}`;
+      }
+    }
+
+    const extension = mimeToExtension(recordedBlob?.type);
+    return `audio-${Date.now()}-${random}.${extension}`;
+  };
 
   const checkAuth = () => {
     try {
@@ -166,6 +192,11 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const handleUploadToS3 = async () => {
     if (!recordedBlob) return;
 
+    if (recordedBlob.size === 0) {
+      onError?.("Recorded audio is empty. Please record again before uploading.");
+      return;
+    }
+
     if (!isAuthenticated) {
       const msg = "Please log in to upload recordings.";
       onError?.(msg);
@@ -176,7 +207,8 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     setIsUploading(true);
 
     try {
-      const presignedUrl = await getPresignedUrl();
+      const uploadFilename = buildUploadFilename();
+      const presignedUrl = await getPresignedUrl(uploadFilename);
 
       const contentType =
         (recordedBlob as any)?.type && (recordedBlob as any).type.length > 0
