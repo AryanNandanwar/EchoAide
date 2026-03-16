@@ -33,8 +33,16 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
   const navigate = useNavigate();
+
+  const addDebugLog = (message: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = `[${timestamp}] ${message}`;
+    console.log(logEntry);
+    setDebugLogs(prev => [...prev.slice(-20), logEntry]); // Keep last 20 logs
+  };
 
   
   const mimeToExtension = (mimeType?: string): string => {
@@ -84,7 +92,15 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!waveformRef.current) return;
+    addDebugLog('Initializing WaveSurfer...');
+    addDebugLog('User Agent: ' + navigator.userAgent);
+    addDebugLog('Is standalone: ' + window.matchMedia('(display-mode: standalone)').matches);
+    addDebugLog('Is iOS: ' + /iPad|iPhone|iPod/.test(navigator.userAgent));
+    
+    if (!waveformRef.current) {
+      addDebugLog('Waveform ref is null');
+      return;
+    }
 
     // Initialize WaveSurfer
     const waveSurfer = WaveSurfer.create({
@@ -99,13 +115,22 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       normalize: true,
     });
 
+    addDebugLog('WaveSurfer created: ' + waveSurfer);
+
     // Initialize Record Plugin
-    const record = waveSurfer.registerPlugin(
-      RecordPlugin.create({
-        scrollingWaveform: true,
-        renderRecordedAudio: true,
-      })
-    );
+    let record: RecordPlugin;
+    try {
+      record = waveSurfer.registerPlugin(
+        RecordPlugin.create({
+          scrollingWaveform: true,
+          renderRecordedAudio: true,
+        })
+      );
+      addDebugLog('Record plugin created successfully: ' + record);
+    } catch (error) {
+      addDebugLog('Error creating record plugin: ' + error);
+      return;
+    }
 
     // Handle recording state changes
     record.on("record-start", () => {
@@ -115,6 +140,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     });
 
     record.on("record-end", (blob: Blob) => {
+      addDebugLog('Recording ended, blob size: ' + blob.size + ', type: ' + blob.type);
       setIsRecording(false);
       setRecordedBlob(blob);
       setSelectedFileName("Recorded audio");
@@ -138,15 +164,23 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
   const handleStartRecording = async () => {
     try {
-      if (!recordRef.current) return;
+      addDebugLog('Starting recording...');
+      if (!recordRef.current) {
+        addDebugLog('Record ref is null');
+        return;
+      }
 
       // clear any previous upload selection
       setRecordedBlob(null);
       setSelectedFileName(null);
 
+      addDebugLog('Requesting microphone access...');
       await recordRef.current.startMic();
+      addDebugLog('Microphone access granted, starting recording...');
       await recordRef.current.startRecording();
+      addDebugLog('Recording started successfully');
     } catch (err) {
+      addDebugLog('Error starting recording: ' + err);
       const msg = err instanceof Error ? err.message : "Failed to start recording";
       onError?.(msg);
     }
@@ -154,10 +188,15 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
   const handleStopRecording = async () => {
     try {
+      addDebugLog('Stopping recording...');
       if (recordRef.current) {
         recordRef.current.stopRecording();
+        addDebugLog('Recording stop command sent');
+      } else {
+        addDebugLog('Record ref is null when trying to stop');
       }
     } catch (error) {
+      addDebugLog('Error stopping recording: ' + error);
       const errorMessage = error instanceof Error ? error.message : "Failed to stop recording";
       onError?.(errorMessage);
     }
@@ -190,7 +229,14 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   };
 
   const handleUploadToS3 = async () => {
-    if (!recordedBlob) return;
+    addDebugLog('handleUploadToS3 called');
+    addDebugLog('recordedBlob: ' + (recordedBlob ? 'exists' : 'null'));
+    addDebugLog('isAuthenticated: ' + isAuthenticated);
+    
+    if (!recordedBlob) {
+      addDebugLog('No recorded blob found');
+      return;
+    }
 
     if (recordedBlob.size === 0) {
       onError?.("Recorded audio is empty. Please record again before uploading.");
@@ -207,13 +253,20 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     setIsUploading(true);
 
     try {
+      addDebugLog('Starting upload process...');
       const uploadFilename = buildUploadFilename();
+      addDebugLog('Upload filename: ' + uploadFilename);
+      
       const presignedUrl = await getPresignedUrl(uploadFilename);
+      addDebugLog('Presigned URL obtained: ' + presignedUrl.substring(0, 100) + '...');
 
       const contentType =
         (recordedBlob as any)?.type && (recordedBlob as any).type.length > 0
           ? (recordedBlob as any).type
           : "audio/wav";
+      
+      addDebugLog('Content type: ' + contentType);
+      addDebugLog('Blob size: ' + recordedBlob.size);
 
       // Use axios PUT to upload the blob/file
       const response = await axios.put(presignedUrl, recordedBlob, {
@@ -221,6 +274,8 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
           "Content-Type": contentType,
         },
       });
+
+      addDebugLog('Upload response status: ' + response.status);
 
       // Confirm upload success with status 200 range
       if (response.status < 200 || response.status >= 300) {
@@ -238,9 +293,12 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         waveSurferRef.current.seekTo(0);
       }
     } catch (error) {
+      addDebugLog('Upload error occurred: ' + error);
       const errorMessage = error instanceof Error ? error.message : "Upload failed";
+      addDebugLog('Error message: ' + errorMessage);
       onError?.(errorMessage);
     } finally {
+      addDebugLog('Upload process completed, setting isUploading to false');
       setIsUploading(false);
     }
   };
@@ -258,6 +316,38 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-300 shadow-lg p-4 z-50">
       <div className="max-w-2xl mx-auto">
+        {/* Debug info */}
+        <div className="mb-2 text-xs text-gray-500 p-2 bg-gray-100 rounded">
+          <div>Debug: recordedBlob={recordedBlob ? 'exists' : 'null'}, isRecording={isRecording}, isAuthenticated={isAuthenticated}</div>
+          <div>User Agent: {typeof navigator !== 'undefined' ? navigator.userAgent.split(' ')[0] : 'N/A'}</div>
+          <div>iOS: {typeof navigator !== 'undefined' ? /iPad|iPhone|iPod/.test(navigator.userAgent).toString() : 'N/A'}</div>
+          <div>PWA: {typeof window !== 'undefined' ? window.matchMedia('(display-mode: standalone)').matches.toString() : 'N/A'}</div>
+          <div className="mt-2">
+            <button 
+              onClick={() => {
+                const logs = debugLogs.join('\n');
+                navigator.clipboard.writeText(logs).then(() => alert('Debug logs copied!'));
+              }}
+              className="px-2 py-1 bg-blue-500 text-white rounded text-xs mr-2"
+            >
+              Copy Logs
+            </button>
+            <button 
+              onClick={() => setDebugLogs([])}
+              className="px-2 py-1 bg-red-500 text-white rounded text-xs"
+            >
+              Clear Logs
+            </button>
+          </div>
+          {debugLogs.length > 0 && (
+            <div className="mt-2 max-h-32 overflow-y-auto bg-white p-2 rounded border">
+              {debugLogs.map((log, index) => (
+                <div key={index} className="debug-log text-xs font-mono">{log}</div>
+              ))}
+            </div>
+          )}
+        </div>
+        
         <div
           style={{
             display: isRecording || (recordedBlob && !isRecording) ? "block" : "none",
@@ -333,7 +423,15 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
               <Button
                 variant="contained"
                 color="success"
-                onClick={handleUploadToS3}
+                onClick={() => {
+                  addDebugLog('Generate Note button clicked');
+                  addDebugLog('Current state - recordedBlob: ' + (recordedBlob ? 'exists' : 'null'));
+                  addDebugLog('Current state - isRecording: ' + isRecording);
+                  addDebugLog('Current state - isAuthenticated: ' + isAuthenticated);
+                  addDebugLog('Current state - isUploading: ' + isUploading);
+                  alert('Generate Note button clicked! Check debug logs below.');
+                  handleUploadToS3();
+                }}
                 disabled={isUploading}
                 className="normal-case"
               >

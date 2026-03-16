@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Remote Debug Console</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .log { background: #f5f5f5; padding: 10px; margin: 5px 0; border-radius: 5px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e8; color: #2e7d32; }
+        .info { background: #e3f2fd; color: #1565c0; }
+        textarea { width: 100%; height: 200px; font-family: monospace; }
+        button { padding: 10px 20px; margin: 5px; background: #1976d2; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #1565c0; }
+    </style>
+</head>
+<body>
+    <h1>Remote Debug Console</h1>
+    <p>Open this page on your iPhone PWA to see debug logs</p>
+    
+    <button onclick="clearLogs()">Clear Logs</button>
+    <button onclick="copyLogs()">Copy Logs</button>
+    <button onclick="testRecording()">Test Recording</button>
+    
+    <div id="logs"></div>
+    
+    <textarea id="logText" readonly placeholder="Debug logs will appear here..."></textarea>
+    
+    <script>
+        // Override console methods to capture logs
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalWarn = console.warn;
+        const originalInfo = console.info;
+        
+        const logs = [];
+        const logsDiv = document.getElementById('logs');
+        const logText = document.getElementById('logText');
+        
+        function addLog(level, ...args) {
+            const message = args.map(arg => 
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${level}: ${message}`;
+            
+            logs.push(logEntry);
+            
+            const logDiv = document.createElement('div');
+            logDiv.className = `log ${level}`;
+            logDiv.textContent = logEntry;
+            logsDiv.appendChild(logDiv);
+            
+            logText.value = logs.join('\n');
+            logText.scrollTop = logText.scrollHeight;
+            
+            // Keep only last 100 logs in view
+            if (logsDiv.children.length > 100) {
+                logsDiv.removeChild(logsDiv.firstChild);
+            }
+        }
+        
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            addLog('INFO', ...args);
+        };
+        
+        console.error = function(...args) {
+            originalError.apply(console, args);
+            addLog('ERROR', ...args);
+        };
+        
+        console.warn = function(...args) {
+            originalWarn.apply(console, args);
+            addLog('WARN', ...args);
+        };
+        
+        console.info = function(...args) {
+            originalInfo.apply(console, args);
+            addLog('INFO', ...args);
+        };
+        
+        function clearLogs() {
+            logs.length = 0;
+            logsDiv.innerHTML = '';
+            logText.value = '';
+        }
+        
+        function copyLogs() {
+            logText.select();
+            document.execCommand('copy');
+            alert('Logs copied to clipboard!');
+        }
+        
+        function testRecording() {
+            console.log('=== Testing Recording Functionality ===');
+            console.log('User Agent:', navigator.userAgent);
+            console.log('Platform:', navigator.platform);
+            console.log('Is iOS:', /iPad|iPhone|iPod/.test(navigator.userAgent));
+            console.log('Is Standalone:', window.matchMedia('(display-mode: standalone)').matches);
+            console.log('Is Safari:', /Safari/.test(navigator.userAgent) && !/Chrome|CriOS|FxiOS/.test(navigator.userAgent));
+            
+            // Test microphone permission
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    console.log('Microphone access granted');
+                    stream.getTracks().forEach(track => track.stop());
+                })
+                .catch(err => {
+                    console.error('Microphone access denied:', err);
+                });
+        }
+        
+        // Auto-scroll to bottom
+        setInterval(() => {
+            window.scrollTo(0, document.body.scrollHeight);
+        }, 1000);
+    </script>
+</body>
+</html>
