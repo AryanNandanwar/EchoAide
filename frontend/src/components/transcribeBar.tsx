@@ -5,6 +5,8 @@ import { Button, CircularProgress, Alert } from "@mui/material";
 import MicIcon from "@mui/icons-material/Mic";
 import StopIcon from "@mui/icons-material/Stop";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
+import PauseIcon from "@mui/icons-material/Pause";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
@@ -33,17 +35,18 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  // const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [wakeLock, setWakeLock] = useState<any>(null);
+  const [isPaused, setIsPaused] = useState(false);
 
   const navigate = useNavigate();
 
-  const addDebugLog = (message: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    const logEntry = `[${timestamp}] ${message}`;
-    console.log(logEntry);
-    setDebugLogs(prev => [...prev.slice(-20), logEntry]); // Keep last 20 logs
-  };
+  // const addDebugLog = (message: string) => {
+  //   const timestamp = new Date().toLocaleTimeString();
+  //   const logEntry = `[${timestamp}] ${message}`;
+  //   // console.log(logEntry); // Commented out to reduce console noise
+  //   setDebugLogs(prev => [...prev.slice(-20), logEntry]); // Keep last 20 logs
+  // };
 
   // Request wake lock to prevent screen from sleeping during recording
   const requestWakeLock = async () => {
@@ -51,12 +54,12 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       if ('wakeLock' in navigator) {
         const lock = await (navigator as any).wakeLock.request('screen');
         setWakeLock(lock);
-        addDebugLog('Wake lock acquired');
+        // addDebugLog('Wake lock acquired');
       } else {
-        addDebugLog('Wake lock not supported on this device');
+        // addDebugLog('Wake lock not supported on this device');
       }
     } catch (err) {
-      addDebugLog('Wake lock request failed: ' + err);
+      // addDebugLog('Wake lock request failed: ' + err);
     }
   };
 
@@ -65,7 +68,43 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     if (wakeLock) {
       wakeLock.release();
       setWakeLock(null);
-      addDebugLog('Wake lock released');
+      // addDebugLog('Wake lock released');
+    }
+  };
+
+  // Handle phone call interruption
+  const handlePhoneCallInterruption = () => {
+    if (isRecording && !isPaused) {
+      // addDebugLog('Phone call detected - pausing recording');
+      handlePauseRecording();
+    }
+  };
+
+  // Pause recording
+  const handlePauseRecording = async () => {
+    try {
+      if (recordRef.current && isRecording && !isPaused) {
+        // addDebugLog('Pausing recording...');
+        await recordRef.current.pauseRecording();
+        setIsPaused(true);
+        // addDebugLog('Recording paused');
+      }
+    } catch (error) {
+      // addDebugLog('Error pausing recording: ' + error);
+    }
+  };
+
+  // Resume recording
+  const handleResumeRecording = async () => {
+    try {
+      if (recordRef.current && isRecording && isPaused) {
+        // addDebugLog('Resuming recording...');
+        await recordRef.current.resumeRecording();
+        setIsPaused(false);
+        // addDebugLog('Recording resumed');
+      }
+    } catch (error) {
+      // addDebugLog('Error resuming recording: ' + error);
     }
   };
 
@@ -113,17 +152,47 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       }
     };
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
+
+    // Handle page visibility changes (phone calls, app switching)
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // addDebugLog('Page hidden - possible phone call or app switch');
+        handlePhoneCallInterruption();
+      } else {
+        // addDebugLog('Page visible - user returned');
+      }
+    };
+
+    // Handle focus/blur events (additional phone call detection)
+    const handleBlur = () => {
+      // addDebugLog('Window blurred - possible phone call');
+      handlePhoneCallInterruption();
+    };
+
+    const handleFocus = () => {
+      // addDebugLog('Window focused - user returned');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [isRecording, isPaused]); // Add dependencies
 
   useEffect(() => {
-    addDebugLog('Initializing WaveSurfer...');
-    addDebugLog('User Agent: ' + navigator.userAgent);
-    addDebugLog('Is standalone: ' + window.matchMedia('(display-mode: standalone)').matches);
-    addDebugLog('Is iOS: ' + /iPad|iPhone|iPod/.test(navigator.userAgent));
+    // addDebugLog('Initializing WaveSurfer...');
+    // addDebugLog('User Agent: ' + navigator.userAgent);
+    // addDebugLog('Is standalone: ' + window.matchMedia('(display-mode: standalone)').matches);
+    // addDebugLog('Is iOS: ' + /iPad|iPhone|iPod/.test(navigator.userAgent));
     
     if (!waveformRef.current) {
-      addDebugLog('Waveform ref is null');
+      // addDebugLog('Waveform ref is null');
       return;
     }
 
@@ -140,7 +209,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       normalize: true,
     });
 
-    addDebugLog('WaveSurfer created: ' + waveSurfer);
+    // addDebugLog('WaveSurfer created: ' + waveSurfer);
 
     // Initialize Record Plugin
     let record: RecordPlugin;
@@ -151,9 +220,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
           renderRecordedAudio: true,
         })
       );
-      addDebugLog('Record plugin created successfully: ' + record);
+      // addDebugLog('Record plugin created successfully: ' + record);
     } catch (error) {
-      addDebugLog('Error creating record plugin: ' + error);
+      // addDebugLog('Error creating record plugin: ' + error);
       return;
     }
 
@@ -166,12 +235,12 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     });
 
     record.on("record-end", (blob: Blob) => {
-      addDebugLog('Recording ended, blob size: ' + blob.size + ', type: ' + blob.type);
+      // addDebugLog('Recording ended, blob size: ' + blob.size + ', type: ' + blob.type);
       releaseWakeLock(); // Release wake lock when recording ends
       
       // Check if blob is empty (iPhone PWA issue)
       if (blob.size === 0) {
-        addDebugLog('ERROR: Audio blob is empty - this is a known iPhone PWA issue');
+        // addDebugLog('ERROR: Audio blob is empty - this is a known iPhone PWA issue');
         onError?.('Recording failed: No audio data captured. This can happen on iPhone PWAs. Please try recording again or use the Upload Audio option.');
         return;
       }
@@ -182,11 +251,13 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     });
 
     record.on("record-pause", () => {
-      setIsRecording(false);
+      // addDebugLog('Recording paused by plugin');
+      setIsPaused(true);
     });
 
     record.on("record-resume", () => {
-      setIsRecording(true);
+      // addDebugLog('Recording resumed by plugin');
+      setIsPaused(false);
     });
 
     waveSurferRef.current = waveSurfer;
@@ -199,9 +270,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
   const handleStartRecording = async () => {
     try {
-      addDebugLog('Starting recording...');
+      // addDebugLog('Starting recording...');
       if (!recordRef.current) {
-        addDebugLog('Record ref is null');
+        // addDebugLog('Record ref is null');
         return;
       }
 
@@ -209,13 +280,13 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       setRecordedBlob(null);
       setSelectedFileName(null);
 
-      addDebugLog('Requesting microphone access...');
+      // addDebugLog('Requesting microphone access...');
       await recordRef.current.startMic();
-      addDebugLog('Microphone access granted, starting recording...');
+      // addDebugLog('Microphone access granted, starting recording...');
       await recordRef.current.startRecording();
-      addDebugLog('Recording started successfully');
+      // addDebugLog('Recording started successfully');
     } catch (err) {
-      addDebugLog('Error starting recording: ' + err);
+      // addDebugLog('Error starting recording: ' + err);
       const msg = err instanceof Error ? err.message : "Failed to start recording";
       onError?.(msg);
     }
@@ -223,15 +294,21 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
   const handleStopRecording = async () => {
     try {
-      addDebugLog('Stopping recording...');
+      // addDebugLog('Stopping recording...');
       if (recordRef.current) {
+        // If paused, resume first to ensure proper stop
+        if (isPaused) {
+          // addDebugLog('Resuming before stopping to ensure proper finalization');
+          await recordRef.current.resumeRecording();
+          setIsPaused(false);
+        }
         recordRef.current.stopRecording();
-        addDebugLog('Recording stop command sent');
+        // addDebugLog('Recording stop command sent');
       } else {
-        addDebugLog('Record ref is null when trying to stop');
+        // addDebugLog('Record ref is null when trying to stop');
       }
     } catch (error) {
-      addDebugLog('Error stopping recording: ' + error);
+      // addDebugLog('Error stopping recording: ' + error);
       const errorMessage = error instanceof Error ? error.message : "Failed to stop recording";
       onError?.(errorMessage);
     }
@@ -264,12 +341,12 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   };
 
   const handleUploadToS3 = async () => {
-    addDebugLog('handleUploadToS3 called');
-    addDebugLog('recordedBlob: ' + (recordedBlob ? 'exists' : 'null'));
-    addDebugLog('isAuthenticated: ' + isAuthenticated);
+    // addDebugLog('handleUploadToS3 called');
+    // addDebugLog('recordedBlob: ' + (recordedBlob ? 'exists' : 'null'));
+    // addDebugLog('isAuthenticated: ' + isAuthenticated);
     
     if (!recordedBlob) {
-      addDebugLog('No recorded blob found');
+      // addDebugLog('No recorded blob found');
       return;
     }
 
@@ -288,20 +365,20 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     setIsUploading(true);
 
     try {
-      addDebugLog('Starting upload process...');
+      // addDebugLog('Starting upload process...');
       const uploadFilename = buildUploadFilename();
-      addDebugLog('Upload filename: ' + uploadFilename);
+      // addDebugLog('Upload filename: ' + uploadFilename);
       
       const presignedUrl = await getPresignedUrl(uploadFilename);
-      addDebugLog('Presigned URL obtained: ' + presignedUrl.substring(0, 100) + '...');
+      // addDebugLog('Presigned URL obtained: ' + presignedUrl.substring(0, 100) + '...');
 
       const contentType =
         (recordedBlob as any)?.type && (recordedBlob as any).type.length > 0
           ? (recordedBlob as any).type
           : "audio/wav";
       
-      addDebugLog('Content type: ' + contentType);
-      addDebugLog('Blob size: ' + recordedBlob.size);
+      // addDebugLog('Content type: ' + contentType);
+      // addDebugLog('Blob size: ' + recordedBlob.size);
 
       // Use axios PUT to upload the blob/file
       const response = await axios.put(presignedUrl, recordedBlob, {
@@ -310,7 +387,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         },
       });
 
-      addDebugLog('Upload response status: ' + response.status);
+      // addDebugLog('Upload response status: ' + response.status);
 
       // Confirm upload success with status 200 range
       if (response.status < 200 || response.status >= 300) {
@@ -328,12 +405,12 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         waveSurferRef.current.seekTo(0);
       }
     } catch (error) {
-      addDebugLog('Upload error occurred: ' + error);
+      // addDebugLog('Upload error occurred: ' + error);
       const errorMessage = error instanceof Error ? error.message : "Upload failed";
-      addDebugLog('Error message: ' + errorMessage);
+      // addDebugLog('Error message: ' + errorMessage);
       onError?.(errorMessage);
     } finally {
-      addDebugLog('Upload process completed, setting isUploading to false');
+      // addDebugLog('Upload process completed, setting isUploading to false');
       setIsUploading(false);
     }
   };
@@ -351,9 +428,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-300 shadow-lg p-4 z-50">
       <div className="max-w-2xl mx-auto">
-        {/* Debug info */}
-        <div className="mb-2 text-xs text-gray-500 p-2 bg-gray-100 rounded">
-          <div>Debug: recordedBlob={recordedBlob ? 'exists' : 'null'}, isRecording={isRecording}, isAuthenticated={isAuthenticated}</div>
+        {/* Debug info - commented out for clean UI */}
+        {/* <div className="mb-2 text-xs text-gray-500 p-2 bg-gray-100 rounded">
+          <div>Debug: recordedBlob={recordedBlob ? 'exists' : 'null'}, isRecording={isRecording}, isAuthenticated={isAuthenticated}, isPaused={isPaused}</div>
           <div>User Agent: {typeof navigator !== 'undefined' ? navigator.userAgent.split(' ')[0] : 'N/A'}</div>
           <div>iOS: {typeof navigator !== 'undefined' ? /iPad|iPhone|iPod/.test(navigator.userAgent).toString() : 'N/A'}</div>
           <div>PWA: {typeof window !== 'undefined' ? window.matchMedia('(display-mode: standalone)').matches.toString() : 'N/A'}</div>
@@ -381,7 +458,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
               ))}
             </div>
           )}
-        </div>
+        </div> */}
         
         <div
           style={{
@@ -442,15 +519,51 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                   Start Recording
                 </Button>
               ) : (
-                <Button
-                  variant="contained"
-                  color="error"
-                  startIcon={<StopIcon />}
-                  onClick={handleStopRecording}
-                  className="normal-case"
-                >
-                  Stop Recording
-                </Button>
+                <div className="flex items-center gap-2">
+                  {!isPaused ? (
+                    <>
+                      <Button
+                        variant="contained"
+                        color="warning"
+                        startIcon={<PauseIcon />}
+                        onClick={handlePauseRecording}
+                        className="normal-case"
+                      >
+                        Pause
+                      </Button>
+                      <Button
+                        variant="contained"
+                        color="error"
+                        startIcon={<StopIcon />}
+                        onClick={handleStopRecording}
+                        className="normal-case"
+                      >
+                        Stop Recording
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        variant="contained"
+                        color="success"
+                        startIcon={<PlayArrowIcon />}
+                        onClick={handleResumeRecording}
+                        className="normal-case"
+                      >
+                        Resume
+                      </Button>
+                      <Button
+                        variant="contained"
+                        color="error"
+                        startIcon={<StopIcon />}
+                        onClick={handleStopRecording}
+                        className="normal-case"
+                      >
+                        Stop Recording
+                      </Button>
+                    </>
+                  )}
+                </div>
               )}
             </>
           ) : (
@@ -459,11 +572,11 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                 variant="contained"
                 color="success"
                 onClick={() => {
-                  addDebugLog('Generate Note button clicked');
-                  addDebugLog('Current state - recordedBlob: ' + (recordedBlob ? 'exists' : 'null'));
-                  addDebugLog('Current state - isRecording: ' + isRecording);
-                  addDebugLog('Current state - isAuthenticated: ' + isAuthenticated);
-                  addDebugLog('Current state - isUploading: ' + isUploading);
+                  // addDebugLog('Generate Note button clicked');
+                  // addDebugLog('Current state - recordedBlob: ' + (recordedBlob ? 'exists' : 'null'));
+                  // addDebugLog('Current state - isRecording: ' + isRecording);
+                  // addDebugLog('Current state - isAuthenticated: ' + isAuthenticated);
+                  // addDebugLog('Current state - isUploading: ' + isUploading);
                   alert('Generate Note button clicked! Check debug logs below.');
                   handleUploadToS3();
                 }}
@@ -489,7 +602,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
         {isRecording && (
           <p className="text-center text-sm text-red-600 mt-2 animate-pulse">
-            Recording in progress...
+            {isPaused ? 'Recording paused - tap Resume to continue' : 'Recording in progress...'}
           </p>
         )}
       </div>
