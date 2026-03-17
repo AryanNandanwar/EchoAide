@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import api from "../lib/api";
 import {
   Card,
@@ -49,6 +49,7 @@ const parseText = (v: string) => {
 export default function NotesPage() {
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
   const [loading, setLoading] = useState(true);
+  const noteRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Search, Filter, and Sort State
   const [search, setSearch] = useState("");
@@ -71,6 +72,28 @@ export default function NotesPage() {
       .then((res) => setNotes(res.data))
       .finally(() => setLoading(false));
   }, []);
+
+  // Handle URL hash for scrolling to specific note
+  useEffect(() => {
+    const hash = window.location.hash.slice(1); // Remove # from hash
+    if (hash && noteRefs.current[hash]) {
+      setTimeout(() => {
+        noteRefs.current[hash]?.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'center' 
+        });
+        // Highlight the note briefly
+        const element = noteRefs.current[hash];
+        if (element) {
+          element.style.transition = 'background-color 0.3s';
+          element.style.backgroundColor = '#fef3c7';
+          setTimeout(() => {
+            element.style.backgroundColor = '';
+          }, 2000);
+        }
+      }, 100);
+    }
+  }, [notes]);
 
   // Edit handlers
   const handleEditNote = (note: ClinicalNote) => {
@@ -318,6 +341,7 @@ export default function NotesPage() {
             {filteredNotes.map((n) => (
               <Card
                 key={n.id}
+                ref={(el) => { noteRefs.current[n.id] = el; }}
                 className="
                     rounded-3xl 
                     border border-slate-200 

@@ -10,8 +10,15 @@ import {
   TextField,
   InputAdornment,
   MenuItem,
+  IconButton,
+  Menu,
+  Box,
+  Badge,
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
+import NotesIcon from "@mui/icons-material/Notes";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import { useNavigate } from "react-router-dom";
 import ResponsiveAppBar from "../components/navbar";
 
 type Patient = {
@@ -20,23 +27,56 @@ type Patient = {
   gender?: string;
   age?: number;
   phone?: string;
-  createdAt: string; // Added to support sorting by date
+  createdAt: string;
+  notesCount?: number;
+};
+
+type NoteSummary = {
+  id: string;
+  createdAt: string;
+  summary: string;
 };
 
 export default function PatientsPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
+  const [notesSummaries, setNotesSummaries] = useState<Record<string, NoteSummary[]>>({});
+  const [loadingNotes, setLoadingNotes] = useState<Record<string, boolean>>({});
+  const [anchorEl, setAnchorEl] = useState<Record<string, HTMLElement | null>>({});
+  const navigate = useNavigate();
 
   // Search and Sort State
   const [search, setSearch] = useState("");
   const [sortOrder, setSortOrder] = useState<"latest" | "oldest">("latest");
 
   useEffect(() => {
-    api.get("/api/doctor/me/patients")
-      .then((res) => {
-        setPatients(res.data);
-      })
-      .finally(() => setLoading(false));
+    const fetchPatients = async () => {
+      try {
+        const res = await api.get("/api/doctor/me/patients");
+        const patientsData = res.data;
+        
+        // Fetch notes count for each patient
+        const patientsWithCounts = await Promise.all(
+          patientsData.map(async (patient: Patient) => {
+            try {
+              const countRes = await api.get(`/api/clinical-notes/patient/${patient.id}/count`);
+              return { ...patient, notesCount: countRes.data.count };
+            } catch (error) {
+              console.error(`Failed to fetch notes count for patient ${patient.id}:`, error);
+              return { ...patient, notesCount: 0 };
+            }
+          })
+        );
+        
+        setPatients(patientsWithCounts);
+      } catch (error) {
+        console.error('Failed to fetch patients:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchPatients();
   }, []);
 
   // Filter and Sort Logic
@@ -58,6 +98,33 @@ export default function PatientsPage() {
         return sortOrder === "latest" ? dateB - dateA : dateA - dateB;
       });
   }, [patients, search, sortOrder]);
+
+  const fetchNotesSummary = async (patientId: string) => {
+    if (notesSummaries[patientId]) return; // Already fetched
+    
+    setLoadingNotes(prev => ({ ...prev, [patientId]: true }));
+    try {
+      const res = await api.get(`/api/clinical-notes/patient/${patientId}/summary`);
+      setNotesSummaries(prev => ({ ...prev, [patientId]: res.data }));
+    } catch (error) {
+      console.error(`Failed to fetch notes summary for patient ${patientId}:`, error);
+    } finally {
+      setLoadingNotes(prev => ({ ...prev, [patientId]: false }));
+    }
+  };
+
+  const handleMenuClick = (event: React.MouseEvent<HTMLElement>, patientId: string) => {
+    setAnchorEl(prev => ({ ...prev, [patientId]: event.currentTarget }));
+    fetchNotesSummary(patientId);
+  };
+
+  const handleMenuClose = (patientId: string) => {
+    setAnchorEl(prev => ({ ...prev, [patientId]: null }));
+  };
+
+  const handleNoteClick = (noteId: string) => {
+    navigate(`/notes#${noteId}`);
+  };
 
   if (loading) {
     return (
@@ -138,6 +205,75 @@ export default function PatientsPage() {
                     {p.age && <Chip label={`Age: ${p.age}`} />}
                     {p.phone && <Chip label={`Contact: ${p.phone}`} />}
                   </div>
+
+                  <div className="flex items-center justify-between mt-4">
+                    <Badge 
+                      badgeContent={p.notesCount || 0} 
+                      color="primary" 
+                      showZero
+                      className="cursor-pointer"
+                      onClick={(e) => handleMenuClick(e, p.id)}
+                    >
+                      <Chip
+                        icon={<NotesIcon />}
+                        label="Notes"
+                        variant="outlined"
+                        size="small"
+                        className="hover:bg-slate-100"
+                      />
+                    </Badge>
+                    
+                    <IconButton
+                      size="small"
+                      onClick={(e) => handleMenuClick(e, p.id)}
+                      className="text-slate-600 hover:bg-slate-100"
+                    >
+                      <ExpandMoreIcon />
+                    </IconButton>
+                  </div>
+
+                  <Menu
+                    anchorEl={anchorEl[p.id]}
+                    open={Boolean(anchorEl[p.id])}
+                    onClose={() => handleMenuClose(p.id)}
+                    PaperProps={{
+                      style: {
+                        maxHeight: 300,
+                        width: '300px',
+                      },
+                    }}
+                  >
+                    <Box className="p-2">
+                      <Typography variant="subtitle2" className="font-medium text-slate-700 mb-2">
+                        Recent Notes ({p.notesCount || 0})
+                      </Typography>
+                      
+                      {loadingNotes[p.id] ? (
+                        <Box className="flex justify-center py-4">
+                          <CircularProgress size={20} />
+                        </Box>
+                      ) : notesSummaries[p.id]?.length > 0 ? (
+                        notesSummaries[p.id].map((note) => (
+                          <Box
+                            key={note.id}
+                            onClick={() => handleNoteClick(note.id)}
+                            className="p-2 hover:bg-slate-50 rounded cursor-pointer mb-1"
+                          >
+                            <Typography variant="caption" className="text-slate-500">
+                              {new Date(note.createdAt).toLocaleDateString()}
+                            </Typography>
+                            <Typography variant="body2" className="text-slate-700 text-sm">
+                              {note.summary}
+                            </Typography>
+                          </Box>
+                        ))
+                      ) : (
+                        <Typography variant="body2" className="text-slate-500 text-center py-4">
+                          No notes found
+                        </Typography>
+                      )}
+                    </Box>
+                  </Menu>
                 </CardContent>
               </Card>
             ))}

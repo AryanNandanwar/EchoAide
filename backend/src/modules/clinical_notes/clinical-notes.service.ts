@@ -111,5 +111,58 @@ export class ClinicalNotesService {
     await this.notesCollection.remove(note);
   }
 
+  async getNotesCountForPatient(doctorId: string, patientId: string): Promise<{ count: number }> {
+    const count = await this.notesCollection.count({
+      where: {
+        doctor: { id: doctorId },
+        patient: { id: patientId },
+      },
+    });
+    return { count };
+  }
+
+  async getNotesSummaryForPatient(doctorId: string, patientId: string): Promise<any[]> {
+    const notes = await this.notesCollection.find({
+      where: {
+        doctor: { id: doctorId },
+        patient: { id: patientId },
+      },
+      relations: ['patient'],
+      select: ['id', 'createdAt', 'medicalHistory', 'problemsFaced'],
+      order: { createdAt: 'DESC' },
+    });
+
+    return notes.map(note => ({
+      id: note.id,
+      createdAt: note.createdAt,
+      summary: this.generateNoteSummary(note),
+    }));
+  }
+
+  private generateNoteSummary(note: ClinicalNote): string {
+    const medicalHistory = this.parseJsonField(note.medicalHistory);
+    const problemsFaced = this.parseJsonField(note.problemsFaced);
+    
+    let summary = '';
+    if (medicalHistory && medicalHistory.length > 0) {
+      summary += `History: ${medicalHistory.slice(0, 2).join(', ')}`;
+    }
+    if (problemsFaced && problemsFaced.length > 0) {
+      if (summary) summary += ' | ';
+      summary += `Issues: ${problemsFaced.slice(0, 2).join(', ')}`;
+    }
+    
+    return summary || 'Clinical visit note';
+  }
+
+  private parseJsonField(field: string): string[] {
+    try {
+      const parsed = JSON.parse(field);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return field ? [field] : [];
+    }
+  }
+
 }
 

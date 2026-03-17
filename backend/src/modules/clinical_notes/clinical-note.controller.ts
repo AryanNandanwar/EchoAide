@@ -92,4 +92,22 @@ export class ClinicalNotesController {
       throw error;
     }
   }
+
+  @Get('patient/:patientId/count')
+  async getNotesCountForPatient(
+    @Req() req: any,
+    @Param('patientId') patientId: string,
+  ) {
+    const doctorId = req.user.id;
+    return this.clinicalNotesService.getNotesCountForPatient(doctorId, patientId);
+  }
+
+  @Get('patient/:patientId/summary')
+  async getNotesSummaryForPatient(
+    @Req() req: any,
+    @Param('patientId') patientId: string,
+  ) {
+    const doctorId = req.user.id;
+    return this.clinicalNotesService.getNotesSummaryForPatient(doctorId, patientId);
+  }
 }
