@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soniox WebSocket Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+        }
+        .transcript {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            min-height: 100px;
+        }
+        .partial {
+            color: #666;
+            font-style: italic;
+        }
+        .final {
+            color: #333;
+            font-weight: bold;
+        }
+        .status {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .error {
+            background: #ffe7e7;
+            color: #d00;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Soniox WebSocket Transcription Test</h1>
+    
+    <div class="status" id="status">Ready to test Soniox connection</div>
+    
+    <div class="controls">
+        <button id="startBtn">Start Recording</button>
+        <button id="stopBtn" disabled>Stop Recording</button>
+        <button id="clearBtn">Clear Transcript</button>
+    </div>
+    
+    <div class="transcript" id="transcript">
+        <div>Transcripts will appear here...</div>
+    </div>
+
+    <script>
+        let ws = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+
+        const statusDiv = document.getElementById('status');
+        const transcriptDiv = document.getElementById('transcript');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const clearBtn = document.getElementById('clearBtn');
+
+        function updateStatus(message, isError = false) {
+            statusDiv.textContent = message;
+            statusDiv.className = isError ? 'error' : 'status';
+        }
+
+        function addTranscript(text, isPartial = false) {
+            const div = document.createElement('div');
+            div.className = isPartial ? 'partial' : 'final';
+            div.textContent = `${isPartial ? '[Partial] ' : '[Final] '}${text}`;
+            transcriptDiv.appendChild(div);
+            transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+        }
+
+        function connectWebSocket() {
+            return new Promise((resolve, reject) => {
+                updateStatus('Connecting to Soniox WebSocket...');
+                
+                // Note: This would normally connect to your backend WebSocket gateway
+                // For testing, we'll simulate the connection
+                ws = new WebSocket('ws://localhost:8080');
+                
+                ws.onopen = () => {
+                    updateStatus('Connected to WebSocket');
+                    resolve();
+                };
+                
+                ws.onerror = (error) => {
+                    updateStatus(`WebSocket error: ${error}`, true);
+                    reject(error);
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'transcript') {
+                            addTranscript(data.data.transcript, data.data.isPartial);
+                        } else if (data.type === 'error') {
+                            updateStatus(`Error: ${data.data.message}`, true);
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse message:', event.data);
+                    }
+                };
+                
+                ws.onclose = () => {
+                    updateStatus('WebSocket connection closed');
+                    ws = null;
+                };
+            });
+        }
+
+        async function startRecording() {
+            try {
+                await connectWebSocket();
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    } 
+                });
+                
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+                
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                        
+                        // Convert to ArrayBuffer and send to WebSocket
+                        event.data.arrayBuffer().then(buffer => {
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(buffer);
+                            }
+                        });
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    stream.getTracks().forEach(track => track.stop());
+                };
+                
+                mediaRecorder.start(100); // Send data every 100ms
+                isRecording = true;
+                
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                updateStatus('Recording... Speak into your microphone');
+                
+            } catch (error) {
+                updateStatus(`Failed to start recording: ${error.message}`, true);
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                updateStatus('Recording stopped');
+                
+                if (ws) {
+                    ws.close();
+                }
+            }
+        }
+
+        function clearTranscript() {
+            transcriptDiv.innerHTML = '<div>Transcripts will appear here...</div>';
+        }
+
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+        clearBtn.addEventListener('click', clearTranscript);
+    </script>
+</body>
+</html>

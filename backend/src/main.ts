@@ -56,7 +56,7 @@ async function bootstrap() {
     });
 
   // If you use a global prefix:
-  app.setGlobalPrefix('api'); // if you do, remember POST path changes to /api/auth/signup
+  app.setGlobalPrefix('api', { exclude: ['/socket.io'] }); // exclude WebSocket from global prefix
 
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');

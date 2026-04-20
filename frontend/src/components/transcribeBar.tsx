@@ -1,144 +1,62 @@
-import React, { useEffect, useRef, useState } from "react";
-import WaveSurfer from "wavesurfer.js";
-import RecordPlugin from "wavesurfer.js/dist/plugins/record.js";
-import { Button, CircularProgress, Alert } from "@mui/material";
+import React, { useEffect, useState, useRef } from "react";
+import { Button, CircularProgress, Alert, Chip } from "@mui/material";
 import MicIcon from "@mui/icons-material/Mic";
 import StopIcon from "@mui/icons-material/Stop";
-import UploadFileIcon from "@mui/icons-material/UploadFile";
-import PauseIcon from "@mui/icons-material/Pause";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import axios from "axios";
+import UploadIcon from "@mui/icons-material/Upload";
+import DownloadIcon from "@mui/icons-material/Download";
+import { useStreamingTranscription } from "../hooks/use-streaming-transcription";
 import { useNavigate } from "react-router-dom";
 
 interface AudioRecorderProps {
-  onUploadComplete?: (s3Url: string) => void;
   onError?: (error: string) => void;
-  getPresignedUrl: (filename: string) => Promise<string>;
   isGeneratingNote?: boolean;
   isNoteReady?: boolean;
   onNoteSaved?: () => void;
+  onSessionStart?: (sessionId: string) => void;
+  onSessionEnd?: () => void;
+  websocketUrl?: string;
 }
 
 export const AudioRecorder: React.FC<AudioRecorderProps> = ({
-  onUploadComplete,
   onError,
-  getPresignedUrl,
   isGeneratingNote = false,
-  isNoteReady = false
-
+  isNoteReady = false,
+  onSessionStart,
+  onSessionEnd,
+  websocketUrl = 'http://localhost:3000'
 }) => {
-  const waveformRef = useRef<HTMLDivElement>(null);
-  const waveSurferRef = useRef<WaveSurfer | null>(null);
-  const recordRef = useRef<RecordPlugin | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const [isRecording, setIsRecording] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
-
-  // NEW: filename display (for uploaded file)
-  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
-
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  // const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [wakeLock, setWakeLock] = useState<any>(null);
-  const [isPaused, setIsPaused] = useState(false);
-
+  const [recordedAudio] = useState<{base64: string, sampleCount: number} | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isGeneratingFromUpload, setIsGeneratingFromUpload] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
-  // const addDebugLog = (message: string) => {
-  //   const timestamp = new Date().toLocaleTimeString();
-  //   const logEntry = `[${timestamp}] ${message}`;
-  //   // console.log(logEntry); // Commented out to reduce console noise
-  //   setDebugLogs(prev => [...prev.slice(-20), logEntry]); // Keep last 20 logs
-  // };
-
-  // Request wake lock to prevent screen from sleeping during recording
-  const requestWakeLock = async () => {
-    try {
-      if ('wakeLock' in navigator) {
-        const lock = await (navigator as any).wakeLock.request('screen');
-        setWakeLock(lock);
-        // addDebugLog('Wake lock acquired');
-      } else {
-        // addDebugLog('Wake lock not supported on this device');
-      }
-    } catch (err) {
-      // addDebugLog('Wake lock request failed: ' + err);
+  // Use streaming transcription hook (audio-only)
+  const {
+    isRecording,
+    isConnecting,
+    isConnected,
+    error,
+    startRecording,
+    stopRecording,
+    clearError,
+    sendAudioChunk
+  } = useStreamingTranscription({
+    websocketUrl,
+    onError: (errorMessage) => {
+      onError?.(errorMessage);
+    },
+    onSessionStart: (sessionId) => {
+      console.log("Component: Session started", sessionId);
+      onSessionStart?.(sessionId);
+    },
+    onSessionEnd: () => {
+      console.log("Component: Session ended");
+      onSessionEnd?.();
     }
-  };
-
-  // Release wake lock when done
-  const releaseWakeLock = () => {
-    if (wakeLock) {
-      wakeLock.release();
-      setWakeLock(null);
-      // addDebugLog('Wake lock released');
-    }
-  };
-
-  // Handle phone call interruption
-  const handlePhoneCallInterruption = () => {
-    if (isRecording && !isPaused) {
-      // addDebugLog('Phone call detected - pausing recording');
-      handlePauseRecording();
-    }
-  };
-
-  // Pause recording
-  const handlePauseRecording = async () => {
-    try {
-      if (recordRef.current && isRecording && !isPaused) {
-        // addDebugLog('Pausing recording...');
-        await recordRef.current.pauseRecording();
-        setIsPaused(true);
-        // addDebugLog('Recording paused');
-      }
-    } catch (error) {
-      // addDebugLog('Error pausing recording: ' + error);
-    }
-  };
-
-  // Resume recording
-  const handleResumeRecording = async () => {
-    try {
-      if (recordRef.current && isRecording && isPaused) {
-        // addDebugLog('Resuming recording...');
-        await recordRef.current.resumeRecording();
-        setIsPaused(false);
-        // addDebugLog('Recording resumed');
-      }
-    } catch (error) {
-      // addDebugLog('Error resuming recording: ' + error);
-    }
-  };
-
-  
-  const mimeToExtension = (mimeType?: string): string => {
-    const lower = (mimeType || "").toLowerCase();
-    if (lower.includes("wav")) return "wav";
-    if (lower.includes("mpeg") || lower.includes("mp3")) return "mp3";
-    if (lower.includes("mp4") || lower.includes("m4a")) return "m4a";
-    if (lower.includes("flac")) return "flac";
-    if (lower.includes("webm")) return "webm";
-    if (lower.includes("ogg")) return "ogg";
-    return "wav";
-  };
-
-  const buildUploadFilename = (): string => {
-    const random = Math.random().toString(36).substring(2, 15);
-
-    if (recordedBlob instanceof File && recordedBlob.name) {
-      const extension = recordedBlob.name.split(".").pop()?.toLowerCase();
-      if (extension) {
-        return `audio-${Date.now()}-${random}.${extension}`;
-      }
-    }
-
-    const extension = mimeToExtension(recordedBlob?.type);
-    return `audio-${Date.now()}-${random}.${extension}`;
-  };
+  });
 
   const checkAuth = () => {
     try {
@@ -159,327 +77,273 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     };
     window.addEventListener("storage", onStorage);
 
-    // Handle page visibility changes (phone calls, app switching)
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        // addDebugLog('Page hidden - possible phone call or app switch');
-        handlePhoneCallInterruption();
-      } else {
-        // addDebugLog('Page visible - user returned');
-      }
-    };
-
-    // Handle focus/blur events (additional phone call detection)
-    const handleBlur = () => {
-      // addDebugLog('Window blurred - possible phone call');
-      handlePhoneCallInterruption();
-    };
-
-    const handleFocus = () => {
-      // addDebugLog('Window focused - user returned');
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('blur', handleBlur);
-    window.addEventListener('focus', handleFocus);
-
     return () => {
       window.removeEventListener("storage", onStorage);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('blur', handleBlur);
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [isRecording, isPaused]); // Add dependencies
-
-  useEffect(() => {
-    // addDebugLog('Initializing WaveSurfer...');
-    // addDebugLog('User Agent: ' + navigator.userAgent);
-    // addDebugLog('Is standalone: ' + window.matchMedia('(display-mode: standalone)').matches);
-    // addDebugLog('Is iOS: ' + /iPad|iPhone|iPod/.test(navigator.userAgent));
-    
-    if (!waveformRef.current) {
-      // addDebugLog('Waveform ref is null');
-      return;
-    }
-
-    // Initialize WaveSurfer
-    const waveSurfer = WaveSurfer.create({
-      container: waveformRef.current,
-      waveColor: "#3f51b5",
-      progressColor: "#1976d2",
-      cursorColor: "#1976d2",
-      height: 60,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 2,
-      normalize: true,
-    });
-
-    // addDebugLog('WaveSurfer created: ' + waveSurfer);
-
-    // Initialize Record Plugin
-    let record: RecordPlugin;
-    try {
-      record = waveSurfer.registerPlugin(
-        RecordPlugin.create({
-          scrollingWaveform: true,
-          renderRecordedAudio: true,
-        })
-      );
-      // addDebugLog('Record plugin created successfully: ' + record);
-    } catch (error) {
-      // addDebugLog('Error creating record plugin: ' + error);
-      return;
-    }
-
-    // Handle recording state changes
-    record.on("record-start", () => {
-      setIsRecording(true);
-      setRecordedBlob(null);
-      setSelectedFileName(null);
-      requestWakeLock(); // Prevent screen sleep during recording
-    });
-
-    record.on("record-end", (blob: Blob) => {
-      // addDebugLog('Recording ended, blob size: ' + blob.size + ', type: ' + blob.type);
-      releaseWakeLock(); // Release wake lock when recording ends
-      
-      // Check if blob is empty (iPhone PWA issue)
-      if (blob.size === 0) {
-        // addDebugLog('ERROR: Audio blob is empty - this is a known iPhone PWA issue');
-        onError?.('Recording failed: No audio data captured. This can happen on iPhone PWAs. Please try recording again or use the Upload Audio option.');
-        return;
-      }
-      
-      setIsRecording(false);
-      setRecordedBlob(blob);
-      setSelectedFileName("Recorded audio");
-    });
-
-    record.on("record-pause", () => {
-      // addDebugLog('Recording paused by plugin');
-      setIsPaused(true);
-    });
-
-    record.on("record-resume", () => {
-      // addDebugLog('Recording resumed by plugin');
-      setIsPaused(false);
-    });
-
-    waveSurferRef.current = waveSurfer;
-    recordRef.current = record;
-
-    return () => {
-      waveSurfer.destroy();
     };
   }, []);
 
   const handleStartRecording = async () => {
+    if (!isAuthenticated) {
+      onError?.("Please log in to start recording.");
+      navigate("/login");
+      return;
+    }
+
     try {
-      // addDebugLog('Starting recording...');
-      if (!recordRef.current) {
-        // addDebugLog('Record ref is null');
-        return;
-      }
-
-      // clear any previous upload selection
-      setRecordedBlob(null);
-      setSelectedFileName(null);
-
-      // addDebugLog('Requesting microphone access...');
-      await recordRef.current.startMic();
-      // addDebugLog('Microphone access granted, starting recording...');
-      await recordRef.current.startRecording();
-      // addDebugLog('Recording started successfully');
+      await requestWakeLock();
+      clearError();
+      await startRecording();
+      console.log("Recording started")
     } catch (err) {
-      // addDebugLog('Error starting recording: ' + err);
       const msg = err instanceof Error ? err.message : "Failed to start recording";
       onError?.(msg);
+      releaseWakeLock();
     }
   };
 
   const handleStopRecording = async () => {
     try {
-      // addDebugLog('Stopping recording...');
-      if (recordRef.current) {
-        // If paused, resume first to ensure proper stop
-        if (isPaused) {
-          // addDebugLog('Resuming before stopping to ensure proper finalization');
-          await recordRef.current.resumeRecording();
-          setIsPaused(false);
-        }
-        recordRef.current.stopRecording();
-        // addDebugLog('Recording stop command sent');
-      } else {
-        // addDebugLog('Record ref is null when trying to stop');
-      }
+      await stopRecording();
+      releaseWakeLock();
+      // Note: Final note processing is now handled by SSE service
     } catch (error) {
-      // addDebugLog('Error stopping recording: ' + error);
       const errorMessage = error instanceof Error ? error.message : "Failed to stop recording";
       onError?.(errorMessage);
     }
   };
 
-  // NEW: upload file selection
-  const handleSelectFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const allowedExt = [".wav", ".mp3", ".m4a", ".flac"];
-    const lower = file.name.toLowerCase();
-    const ok = allowedExt.some((ext) => lower.endsWith(ext));
-    if (!ok) {
-      onError?.("Unsupported format. Please upload WAV/MP3/M4A/FLAC.");
-      return;
+  // Request wake lock to prevent screen from sleeping during recording
+  const requestWakeLock = async () => {
+    try {
+      if ('wakeLock' in navigator) {
+        const lock = await (navigator as any).wakeLock.request('screen');
+        setWakeLock(lock);
+      }
+    } catch (err) {
+      // Wake lock not supported or failed
     }
-
-    // treat uploaded file like recorded blob
-    setRecordedBlob(file);
-    setSelectedFileName(file.name);
-
-    // reset waveform view
-    if (waveSurferRef.current) {
-      waveSurferRef.current.seekTo(0);
-    }
-
-    // allow selecting the same file again later
-    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleUploadToS3 = async () => {
-    // addDebugLog('handleUploadToS3 called');
-    // addDebugLog('recordedBlob: ' + (recordedBlob ? 'exists' : 'null'));
-    // addDebugLog('isAuthenticated: ' + isAuthenticated);
-    
-    if (!recordedBlob) {
-      // addDebugLog('No recorded blob found');
+  // Release wake lock when done
+  const releaseWakeLock = () => {
+    if (wakeLock) {
+      wakeLock.release();
+      setWakeLock(null);
+    }
+  };
+
+  // Handle file upload
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('File upload handler called');
+    const file = event.target.files?.[0];
+    console.log('Selected file:', file);
+    if (!file) {
+      console.log('No file selected');
       return;
     }
 
-    if (recordedBlob.size === 0) {
-      onError?.("Recorded audio is empty. Please record again before uploading.");
+    // Validate file type
+    const validTypes = ['audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/m4a', 'audio/x-m4a', 'audio/ogg'];
+    console.log('File type:', file.type, 'Valid types:', validTypes);
+    if (!validTypes.includes(file.type)) {
+      onError?.('Please upload a valid audio file (WAV, MP3, M4A, or OGG)');
       return;
     }
 
-    if (!isAuthenticated) {
-      const msg = "Please log in to upload recordings.";
-      onError?.(msg);
-      navigate("/login");
+    // Validate file size (max 25MB)
+    const maxSize = 25 * 1024 * 1024; // 25MB
+    console.log('File size:', file.size, 'Max size:', maxSize);
+    if (file.size > maxSize) {
+      onError?.('File size must be less than 25MB');
       return;
     }
 
-    setIsUploading(true);
+    console.log('File validation passed, setting selected file');
+    // Store the selected file and clear transcript
+    setSelectedFile(file);
+    console.log('setSelectedFile called with file:', file.name);
+    clearError();
+    console.log('File selection completed');
+  };
+
+  // Handle generate note from uploaded file
+  const handleGenerateNoteFromUpload = async () => {
+    if (!selectedFile) {
+      onError?.('No file selected');
+      return;
+    }
+
+    setIsGeneratingFromUpload(true);
+    clearError();
 
     try {
-      // addDebugLog('Starting upload process...');
-      const uploadFilename = buildUploadFilename();
-      // addDebugLog('Upload filename: ' + uploadFilename);
-      
-      const presignedUrl = await getPresignedUrl(uploadFilename);
-      // addDebugLog('Presigned URL obtained: ' + presignedUrl.substring(0, 100) + '...');
+      // Convert file to base64 for processing using browser-compatible method
+      const arrayBuffer = await selectedFile.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      const base64Audio = btoa(String.fromCharCode(...uint8Array));
 
-      const contentType =
-        (recordedBlob as any)?.type && (recordedBlob as any).type.length > 0
-          ? (recordedBlob as any).type
-          : "audio/wav";
-      
-      // addDebugLog('Content type: ' + contentType);
-      // addDebugLog('Blob size: ' + recordedBlob.size);
+      // Start recording session using the hook's method
+      await startRecording();
 
-      // Use axios PUT to upload the blob/file
-      const response = await axios.put(presignedUrl, recordedBlob, {
-        headers: {
-          "Content-Type": contentType,
-        },
-      });
+      // Process the entire file in chunks to simulate real-time streaming
+      await processAudioFileInChunks(base64Audio);
 
-      // addDebugLog('Upload response status: ' + response.status);
+      // Stop recording to trigger final note generation
+      await stopRecording();
 
-      // Confirm upload success with status 200 range
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(`Upload failed with status ${response.status}`);
+      // Clean up
+      setSelectedFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
 
-      const s3Url = presignedUrl.split("?")[0];
-      onUploadComplete?.(s3Url);
-
-      // reset state
-      setRecordedBlob(null);
-      setSelectedFileName(null);
-
-      if (waveSurferRef.current) {
-        waveSurferRef.current.seekTo(0);
-      }
     } catch (error) {
-      // addDebugLog('Upload error occurred: ' + error);
-      const errorMessage = error instanceof Error ? error.message : "Upload failed";
-      // addDebugLog('Error message: ' + errorMessage);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to process audio file';
       onError?.(errorMessage);
     } finally {
-      // addDebugLog('Upload process completed, setting isUploading to false');
-      setIsUploading(false);
+      setIsGeneratingFromUpload(false);
     }
   };
 
-  const handleDiscard = () => {
-    setRecordedBlob(null);
-    setSelectedFileName(null);
+  // Process audio file in chunks to simulate real-time streaming
+  const processAudioFileInChunks = async (base64Audio: string) => {
+    const chunkSize = 1024 * 16; // 16KB chunks
+    const totalLength = base64Audio.length;
+    let offset = 0;
 
-    if (waveSurferRef.current) {
-      waveSurferRef.current.seekTo(0);
+    while (offset < totalLength) {
+      const chunk = base64Audio.slice(offset, offset + chunkSize);
+      
+      // Send audio chunk through the existing WebSocket connection
+      sendAudioChunk(chunk, Date.now());
+      
+      offset += chunkSize;
+      
+      // Small delay to simulate real-time streaming
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   };
 
-  // Always render the waveform container & control visibility via CSS
+  // Trigger file input click
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  // Handle download of recorded audio
+  const handleDownloadRecording = () => {
+    if (!recordedAudio) {
+      onError?.("No recording available to download");
+      return;
+    }
+
+    try {
+      // Convert base64 to blob
+      const binaryString = atob(recordedAudio.base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      
+      // Create download link
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `recording_${new Date().toISOString().replace(/[:.]/g, '-')}.wav`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      console.log(`✅ Downloaded recording with ${recordedAudio.sampleCount} samples`);
+    } catch (error) {
+      console.error("❌ Failed to download recording:", error);
+      onError?.("Failed to download recording");
+    }
+  };
+
+  // Handle save recording for testing
+  const handleSaveRecording = async () => {
+    if (!recordedAudio) {
+      onError?.("No recording available to save");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${websocketUrl}/upload-audio/save-recording`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem("ds_token") || sessionStorage.getItem("ds_token")}`,
+        },
+        body: JSON.stringify({
+          audioData: recordedAudio.base64,
+          sampleCount: recordedAudio.sampleCount
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Save failed');
+      }
+
+      const result = await response.json();
+      console.log(`✅ Recording saved:`, result);
+      
+      // Show success message
+      if (result.success) {
+        console.log(`📁 File saved to: ${result.filepath}`);
+        console.log(`🎯 Ready for Python testing`);
+      }
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to save recording';
+      console.error("❌ Failed to save recording:", error);
+      onError?.(errorMessage);
+    }
+  };
+
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-300 shadow-lg p-4 z-50">
       <div className="max-w-2xl mx-auto">
-        {/* Debug info - commented out for clean UI */}
-        {/* <div className="mb-2 text-xs text-gray-500 p-2 bg-gray-100 rounded">
-          <div>Debug: recordedBlob={recordedBlob ? 'exists' : 'null'}, isRecording={isRecording}, isAuthenticated={isAuthenticated}, isPaused={isPaused}</div>
-          <div>User Agent: {typeof navigator !== 'undefined' ? navigator.userAgent.split(' ')[0] : 'N/A'}</div>
-          <div>iOS: {typeof navigator !== 'undefined' ? /iPad|iPhone|iPod/.test(navigator.userAgent).toString() : 'N/A'}</div>
-          <div>PWA: {typeof window !== 'undefined' ? window.matchMedia('(display-mode: standalone)').matches.toString() : 'N/A'}</div>
-          <div className="mt-2">
-            <button 
-              onClick={() => {
-                const logs = debugLogs.join('\n');
-                navigator.clipboard.writeText(logs).then(() => alert('Debug logs copied!'));
-              }}
-              className="px-2 py-1 bg-blue-500 text-white rounded text-xs mr-2"
-            >
-              Copy Logs
-            </button>
-            <button 
-              onClick={() => setDebugLogs([])}
-              className="px-2 py-1 bg-red-500 text-white rounded text-xs"
-            >
-              Clear Logs
-            </button>
+        {/* Connection Status */}
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Chip 
+              label={isConnecting ? "Connecting..." : isConnected ? "Connected" : "Disconnected"}
+              color={isConnecting ? "warning" : isConnected ? "success" : "error"}
+              size="small"
+            />
+            {isRecording && (
+              <Chip 
+                label="Recording..."
+                color="error"
+                size="small"
+                className="animate-pulse"
+              />
+            )}
           </div>
-          {debugLogs.length > 0 && (
-            <div className="mt-2 max-h-32 overflow-y-auto bg-white p-2 rounded border">
-              {debugLogs.map((log, index) => (
-                <div key={index} className="debug-log text-xs font-mono">{log}</div>
-              ))}
-            </div>
-          )}
-        </div> */}
-        
-        <div
-          style={{
-            display: isRecording || (recordedBlob && !isRecording) ? "block" : "none",
-          }}
-          className="mb-4 bg-gray-50 rounded-lg p-4"
-        >
-          <div ref={waveformRef} className="w-full" />
-
-          {selectedFileName && (
-            <p className="mt-2 text-center text-xs text-gray-600">
-              Selected: <b>{selectedFileName}</b>
-            </p>
-          )}
         </div>
+
+        {/* Note: Live transcript display removed - handled by SSE service */}
+
+        {/* Clinical Note Preview - Removed since main viewer handles display */}
+
+        {/* Debug Display */}
+        {/* <div className="mb-4 bg-gray-100 rounded p-2 text-xs">
+          <div>selectedFile: {selectedFile ? selectedFile.name : 'null'}</div>
+          <div>isRecording: {isRecording.toString()}</div>
+          <div>isConnected: {isConnected.toString()}</div>
+          <div>isAuthenticated: {isAuthenticated.toString()}</div>
+        </div> */}
+
+        {/* Error Display */}
+        {error && (
+          <Alert severity="error" className="mb-4">
+            {error}
+          </Alert>
+        )}
 
         {!isAuthenticated && (
           <div className="mb-4 flex items-center justify-between gap-4">
@@ -493,138 +357,123 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         )}
 
         <div className="flex items-center justify-center gap-4">
-          {isGeneratingNote ? (
+          {isGeneratingNote || isGeneratingFromUpload ? (
             <div className="flex flex-col items-center gap-2">
               <div className="flex items-center gap-2">
                 <CircularProgress size={24} />
-                <span className="text-sm text-gray-600">Getting your note ready, hang on...</span>
+                <span className="text-sm text-gray-600">
+                  {isGeneratingFromUpload ? 'Processing uploaded audio...' : 'Getting your note ready, hang on...'}
+                </span>
               </div>
             </div>
-          ) : !recordedBlob && isAuthenticated ? (
+          ) : isAuthenticated ? (
             <>
-              {/* NEW: Upload button */}
-              <Button
-                variant="outlined"
-                startIcon={<UploadFileIcon />}
-                onClick={() => fileInputRef.current?.click()}
-                sx={{ textTransform: "none" }}
-                disabled={isNoteReady}
-              >
-                Upload Audio
-              </Button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="audio/*,.wav,.mp3,.m4a,.flac"
-                hidden
-                onChange={handleSelectFile}
-              />
-
-              {/* Existing record controls */}
               {!isRecording ? (
-                <Button
-                  variant="contained"
-                  color="primary"
-                  startIcon={<MicIcon />}
-                  onClick={handleStartRecording}
-                  className="normal-case"
-                  disabled={isNoteReady}
-                >
-                  Start Recording
-                </Button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  {!isPaused ? (
+                <div className="flex gap-3 flex-wrap justify-center">
+                  {(() => {
+                    console.log('UI render - selectedFile:', selectedFile);
+                    console.log('UI render - selectedFile truthy:', !!selectedFile);
+                    return selectedFile;
+                  })() ? (
                     <>
                       <Button
                         variant="contained"
-                        color="warning"
-                        startIcon={<PauseIcon />}
-                        onClick={handlePauseRecording}
+                        color="success"
+                        onClick={handleGenerateNoteFromUpload}
                         className="normal-case"
+                        disabled={isNoteReady || !isConnected || isConnecting}
                       >
-                        Pause
+                        Generate Note from {selectedFile?.name || 'selected file'}
                       </Button>
                       <Button
-                        variant="contained"
-                        color="error"
-                        startIcon={<StopIcon />}
-                        onClick={handleStopRecording}
+                        variant="outlined"
+                        color="secondary"
+                        onClick={() => {
+                          setSelectedFile(null);
+                          if (fileInputRef.current) {
+                            fileInputRef.current.value = '';
+                          }
+                        }}
                         className="normal-case"
                       >
-                        Stop Recording
+                        Clear Selection
                       </Button>
                     </>
                   ) : (
                     <>
                       <Button
                         variant="contained"
-                        color="success"
-                        startIcon={<PlayArrowIcon />}
-                        onClick={handleResumeRecording}
+                        color="primary"
+                        startIcon={<MicIcon />}
+                        onClick={handleStartRecording}
                         className="normal-case"
+                        disabled={isNoteReady || !isConnected || isConnecting}
                       >
-                        Resume
+                        Start Recording
                       </Button>
                       <Button
-                        variant="contained"
-                        color="error"
-                        startIcon={<StopIcon />}
-                        onClick={handleStopRecording}
+                        variant="outlined"
+                        color="secondary"
+                        startIcon={<UploadIcon />}
+                        onClick={handleUploadClick}
+                        className="normal-case"
+                        disabled={isNoteReady || !isConnected || isConnecting}
+                      >
+                        Upload Audio
+                      </Button>
+                    </>
+                  )}
+                  {recordedAudio && (
+                    <>
+                      <Button
+                        variant="outlined"
+                        color="success"
+                        startIcon={<DownloadIcon />}
+                        onClick={handleDownloadRecording}
                         className="normal-case"
                       >
-                        Stop Recording
+                        Download
+                      </Button>
+                      <Button
+                        variant="text"
+                        color="info"
+                        onClick={handleSaveRecording}
+                        className="normal-case text-sm"
+                      >
+                        Save as test.wav
                       </Button>
                     </>
                   )}
                 </div>
+              ) : (
+                <Button
+                  variant="contained"
+                  color="error"
+                  startIcon={<StopIcon />}
+                  onClick={handleStopRecording}
+                  className="normal-case"
+                >
+                  Stop Recording
+                </Button>
               )}
-            </>
-          ) : recordedBlob && !isGeneratingNote ? (
-            <>
-              {isNoteReady && (
-                <div className="text-center text-sm text-green-600 mb-2">
-                  Note is ready! Save it to record another.
-                </div>
-              )}
-              <Button
-                variant="contained"
-                color="success"
-                onClick={() => {
-                  // addDebugLog('Generate Note button clicked');
-                  // addDebugLog('Current state - recordedBlob: ' + (recordedBlob ? 'exists' : 'null'));
-                  // addDebugLog('Current state - isRecording: ' + isRecording);
-                  // addDebugLog('Current state - isAuthenticated: ' + isAuthenticated);
-                  // addDebugLog('Current state - isUploading: ' + isUploading);
-                 
-                  handleUploadToS3();
-                }}
-                disabled={isUploading || isNoteReady}
-                className="normal-case"
-              >
-                {isUploading ? (
-                  <>
-                    <CircularProgress size={20} className="mr-2" />
-                    Uploading...
-                  </>
-                ) : (
-                  "Generate Note"
-                )}
-              </Button>
-
-              <Button variant="outlined" onClick={handleDiscard} className="normal-case" disabled={isNoteReady}>
-                Discard
-              </Button>
             </>
           ) : null}
         </div>
 
         {isRecording && (
           <p className="text-center text-sm text-red-600 mt-2 animate-pulse">
-            {isPaused ? 'Recording paused - tap Resume to continue' : 'Recording in progress...'}
+            Recording in progress... Speak clearly into your microphone.
           </p>
         )}
+
+        {/* Hidden file input for audio upload */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="audio/*"
+          onChange={handleFileUpload}
+          style={{ display: 'none' }}
+        />
       </div>
     </div>
   );

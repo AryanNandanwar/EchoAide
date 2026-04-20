@@ -1,682 +1,314 @@
-import { useEffect, useState, useRef } from "react";
-import axios from "axios";
+import { useEffect, useState } from "react";
 import {
   Card,
   CardContent,
   Typography,
   Button,
   CircularProgress,
-  Divider,
-  Box,
-  List,
-  ListItem,
-  ListItemText,
-  Chip,
   TextField,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  IconButton,
 } from "@mui/material";
-import FileDownloadIcon from "@mui/icons-material/FileDownload";
-import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import SaveIcon from "@mui/icons-material/Save";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
-import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import api from "../lib/api";
 import SnackbarToast from "./SnackbarToast";
 import ConfirmDialog from "./ConfirmDialog";
 import NoPatientFoundDialog from "./NoPatientFoundDialog";
+import { type ParsedNote } from "../types/clinical-note";
 
 type Props = {
-  source: string;
-  presignEndpoint?: string;
-  autoPoll?: boolean;
-  pollTimeoutMs?: number;
+  source: ParsedNote;
   className?: string;
   onNoteSaved?: () => void;
   onNoteDiscarded?: () => void;
 };
 
-type ParsedNote = {
-  patientDetails?: Record<string, string>;
-  medicalHistory?: string[];
-  problemFaced?: string | string[];
-  findings?: string[];
-  diagnosis?: string[];
-  investigationsAdvised?: string[];
-  doctorInstructions?: string[];
-  medicationPrescribed?: string[];
-  raw?: string;
-};
-
-type Patient = Record<string, any> & { id?: string; _id?: string };
-
 export default function ClinicalNoteViewer({
   source,
-  presignEndpoint = "/",
-  autoPoll = false,
-  pollTimeoutMs = 60_000,
   className,
   onNoteSaved,
   onNoteDiscarded,
 }: Props) {
-  const [loading, setLoading] = useState(false);
-  const [noteText, setNoteText] = useState<string | null>(null);
   const [parsed, setParsed] = useState<ParsedNote | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const aborterRef = useRef<AbortController | null>(null);
 
   // Edit state
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [_savedNoteId, setSavedNoteId] = useState<string | null>(null);
-  const [editState, setEditState] = useState<{ raw?: string; parsed?: ParsedNote }>({
-    raw: undefined,
-    parsed: undefined,
-  });
-
-  // Patient match picker state
-  const [matchedPatients, setMatchedPatients] = useState<Patient[]>([]);
-  const [matchIndex, setMatchIndex] = useState(0);
-  const [showMatchPicker, setShowMatchPicker] = useState(false);
-  const [creatingPatient, setCreatingPatient] = useState(false);
+  const [editedValues, setEditedValues] = useState<ParsedNote | null>(null);
 
   // Snackbar state
   const [toastOpen, setToastOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [toastSeverity, setToastSeverity] = useState<"success" | "info" | "warning" | "error">("success");
 
-  // Reset confirm dialog
-  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
-
   // Discard note confirm dialog
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
+  
+  // Patient search state
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
+  const [noPatientFoundOpen, setNoPatientFoundOpen] = useState(false);
+  const [foundPatient, setFoundPatient] = useState<any>(null);
+  const [patientSearchLoading, setPatientSearchLoading] = useState(false);
 
-  // optional: disable confirm while resetting
-  const [resetting, setResetting] = useState(false);
-
-  // dialog for no-match create
-  const [noPatientDialogOpen, setNoPatientDialogOpen] = useState(false);
-  const [noPatientDialogInitial, setNoPatientDialogInitial] = useState<{ fullName?: string; age?: string | number; phone?: string; gender?: string } | null>(null);
-  const [creatingFromNoPatientDialog, setCreatingFromNoPatientDialog] = useState(false);
-
-
-
-  // Initialize edit state after fetch
   useEffect(() => {
-    setEditState({ raw: noteText ?? parsed?.raw ?? undefined, parsed: parsed ?? undefined });
-  }, [noteText, parsed]);
-
-  // ----- Keep your presign / parsing / fetch functions (unchanged logic) -----
-  const isPresignedUrl = (s: string) => {
-    try {
-      const u = new URL(s);
-      return u.search.length > 0;
-    } catch {
-      return false;
-    }
-  };
-
-  const getPresignedUrlForKey = async (key: string): Promise<string> => {
-    if (isPresignedUrl(key)) return key;
-    const url = `${presignEndpoint}?key=${encodeURIComponent(key)}`;
-    const resp = await axios.get(url);
-    const data = resp.data;
-    if (typeof data === "string") return data;
-    if (data?.url) return data.url;
-    throw new Error("Unexpected presign endpoint response");
-  };
-
-  const normalizeText = (s: string) => s.replace(/^\uFEFF/, "");
-
-  const HEADINGS = [
-    { key: "patientDetails", labelRegex: /patient details[:\n]/i },
-    { key: "medicalHistory", labelRegex: /medical history[:\n]/i },
-    { key: "problemFaced", labelRegex: /(problem faced|chief complaint|chief complaint:)[:\n]?/i },
-    { key: "findings", labelRegex: /findings?[:\n]/i },
-    { key: "diagnosis", labelRegex: /diagnosis?[:\n]/i },
-    { key: "investigationsAdvised", labelRegex: /(investigations advised|investigations|tests advised|labs advised)[:\n]?/i },
-    { key: "doctorInstructions", labelRegex: /(doctor instructions|doctor's instructions|instructions)[:\n]?/i },
-    { key: "medicationPrescribed", labelRegex: /(medication prescribed|medications prescribed|medication)[:\n]?/i },
-  ] as const;
-
-  const parseClinicalNote = (raw: string): ParsedNote => {
-    const out: ParsedNote = { raw };
-    const text = raw.replace(/\r\n/g, "\n");
-    const sections: { key: string; start: number; match: RegExpExecArray | null }[] = [];
-    HEADINGS.forEach((h) => {
-      const re = h.labelRegex;
-      re.lastIndex = 0;
-      const m = re.exec(text);
-      sections.push({ key: h.key, start: m ? m.index : -1, match: m });
-    });
-
-    const present = sections.filter((s) => s.start >= 0).sort((a, b) => a.start - b.start);
-    if (present.length === 0) {
-      out.raw = text;
-      return out;
-    }
-
-    for (let i = 0; i < present.length; i++) {
-      const sec = present[i];
-      const next = present[i + 1];
-      const startIdx = sec.match ? sec.match.index + sec.match[0].length : sec.start;
-      const endIdx = next ? next.start : text.length;
-      const content = text.slice(startIdx, endIdx).trim();
-
-      switch (sec.key) {
-        case "patientDetails":
-          out.patientDetails = parseKeyValueSection(content);
-          break;
-        case "medicalHistory":
-          out.medicalHistory = parseBulletList(content);
-          break;
-        case "problemFaced":
-          out.problemFaced = looksLikeList(content) ? parseBulletList(content) : content.split(/\n+/).map((s) => s.trim()).filter(Boolean).join("\n");
-          break;
-        case "findings":
-          out.findings = parseBulletList(content);
-          break;
-        case "diagnosis":
-          out.diagnosis = parseBulletList(content);
-          break;
-        case "investigationsAdvised":
-          out.investigationsAdvised = parseBulletList(content);
-          break;
-        case "doctorInstructions":
-          out.doctorInstructions = parseBulletList(content);
-          break;
-        case "medicationPrescribed":
-          out.medicationPrescribed = parseMedicationSection(content);
-          break;
-      }
-    }
-
-    return out;
-  };
-
-  const parseKeyValueSection = (s: string): Record<string, string> => {
-    const lines = s.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-    const result: Record<string, string> = {};
-    for (const line of lines) {
-      const kvMatch = line.match(/^\-?\s*([^:–—-]{1,80}?)\s*[:\-–—]\s*(.+)$/);
-      if (kvMatch) {
-        const k = kvMatch[1].trim();
-        const v = kvMatch[2].trim();
-        result[normalizeKey(k)] = v;
-      } else {
-        if (!result["note"]) result["note"] = line;
-        else result["note"] += " " + line;
-      }
-    }
-    return result;
-  };
-
-  const normalizeKey = (k: string) => k.replace(/\s+/g, " ").trim();
-  const looksLikeList = (s: string) => /^\s*[-*•\d]/m.test(s);
-  const parseBulletList = (s: string): string[] => {
-    const lines = s.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-    return lines.map((l) => l.replace(/^[-*•\s]*\d*\.*\)?\s*/, "").trim()).filter(Boolean);
-  };
-  const parseMedicationSection = (s: string): string[] => {
-    const lines = s.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-    return lines.map((l) => l.replace(/^\d+[\.\)]\s*/, "").replace(/^[-*•\s]+/, "").trim()).filter(Boolean);
-  };
-
-  // fetchNote (keeps behavior same)
-  const fetchNote = async (): Promise<boolean> => {
-    setLoading(true);
-    setError(null);
-    setNoteText(null);
-    setParsed(null);
-    aborterRef.current?.abort();
-    const ctrl = new AbortController();
-    aborterRef.current = ctrl;
-
-    try {
-      let presignedUrl = source;
-      if (!isPresignedUrl(source)) {
-        presignedUrl = await getPresignedUrlForKey(source);
-      }
-
-      const resp = await axios.get(presignedUrl, {
-        responseType: "text",
-        signal: ctrl.signal as any,
-      });
-
-      let rawText = normalizeText(resp.data);
-
-      const maybeJson = (() => {
-        const trimmed = rawText.trim();
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-          try {
-            return JSON.parse(trimmed);
-          } catch {
-            return null;
-          }
-        }
-        return null;
-      })();
-
-      if (maybeJson) {
-        if (typeof maybeJson === "object" && maybeJson !== null && "clinical_note" in maybeJson) {
-          rawText = normalizeText(String((maybeJson as any).clinical_note ?? ""));
-        } else {
-          rawText = normalizeText(JSON.stringify(maybeJson, null, 2));
-        }
-      }
-
-      setNoteText(rawText);
-
+    console.log('ClinicalNoteViewer: source received:', source);
+    if (source && typeof source === 'object') {
       try {
-        const p = parseClinicalNote(rawText);
-        console.log('Parsing successful:', p);
-        setParsed(p);
+        // Backend now sends data in the correct ParsedNote format
+        // Just ensure we have proper defaults for missing fields
+        const parsed: ParsedNote = {
+          patientDetails: source.patientDetails || {},
+          medicalHistory: source.medicalHistory || [],
+          problemFaced: source.problemFaced || '',
+          findings: source.findings || [],
+          diagnosis: source.diagnosis || [],
+          investigationsAdvised: source.investigationsAdvised || [],
+          doctorInstructions: source.doctorInstructions || [],
+          medicationPrescribed: source.medicationPrescribed || [],
+          raw: source.raw || JSON.stringify(source, null, 2)
+        };
+        
+        console.log('ClinicalNoteViewer: parsed result:', parsed);
+        setParsed(parsed);
+        setError(null);
       } catch (error) {
-        console.error('Parsing failed:', error);
-        console.log('Raw text length:', rawText.length);
-        console.log('Raw text preview:', rawText.substring(0, 500));
-        setParsed({ raw: rawText });
+        console.error('Error processing clinical note:', error);
+        setError('Failed to process clinical note');
       }
-
-      return true;
-    } catch (err: any) {
-      if (axios.isCancel(err)) {
-        return false;
-      }
-      setError(err?.response?.data?.message ?? err.message ?? "Failed to fetch note");
-      return false;
-    } finally {
-      setLoading(false);
+    } else {
+      console.log('ClinicalNoteViewer: No valid source data');
+      setParsed(null);
     }
-  };
+  }, [source]);
 
-  useEffect(() => {
-    let stopped = false;
-    let totalElapsed = 0;
-    let delay = 1000;
-
-    if (!autoPoll) {
-      void fetchNote();
-      return () => {
-        aborterRef.current?.abort();
-        stopped = true;
-      };
-    }
-
-    (async () => {
-      while (!stopped && totalElapsed < pollTimeoutMs) {
-        const ok = await fetchNote();
-        if (ok && parsed) break;
-        if (!ok && !error) break;
-        await new Promise((res) => setTimeout(res, delay));
-        totalElapsed += delay;
-        delay = Math.min(delay * 2, 10000);
-      }
-    })();
-
-    return () => {
-      stopped = true;
-      aborterRef.current?.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, autoPoll]);
-
-  // ---------------- Patient helpers ----------------
-  const getEffectivePatientDetails = (): Record<string, string> => {
-    const raw = (editState.parsed?.patientDetails ?? parsed?.patientDetails) ?? {};
-
-    // console.log("Raw patient details:", raw);
-
-    const fullNameFromRaw = (s?: string): string => {
-      if (!s) return "";
-      const trimmed = s.trim();
-      if (trimmed.toLowerCase() === "not mentioned") return "";
-
-      const referredMatch = trimmed.match(/referred to as\s*["']?([^"')]+)["']?/i);
-      if (referredMatch && referredMatch[1]) return referredMatch[1].trim();
-
-      const parenMatch = trimmed.match(/\(([^)]+)\)/);
-      if (parenMatch && parenMatch[1]) {
-        const candidate = parenMatch[1].trim();
-        if (!/not mentioned/i.test(candidate)) return candidate;
-      }
-
-      return trimmed;
-    };
-
-    const fullName = fullNameFromRaw(raw.Name);
-
-    const gender =
-      raw.Gender && !raw.Gender.toLowerCase().includes("not mentioned")
-        ? raw.Gender.trim()
-        : "";
-
-    let age = "";
-    if (raw.Age && !raw.Age.toLowerCase().includes("not mentioned")) {
-      const match = raw.Age.match(/\d+/);
-      if (match) age = match[0];
-    }
-
-    let phone = "";
-    if (raw["Contact Information"] && !raw["Contact Information"].toLowerCase().includes("not mentioned")) {
-      const digits = raw["Contact Information"].replace(/\D/g, "");
-      if (digits.length >= 8) phone = digits;
-    }
-
-    const result = { fullName, gender, age, phone };
-
-    return result;
-  };
-
-  const showToast = (message: string, severity: "success" | "info" | "warning" | "error" = "success", _duration = 3000) => {
+  
+  // Helper functions
+  const showToast = (message: string, severity: "success" | "info" | "warning" | "error") => {
     setToastMessage(message);
     setToastSeverity(severity);
     setToastOpen(true);
-    // auto-close handled by SnackbarToast; keep state for explicit close handler
-    // Optionally you can set a timer to auto-clear message; Snackbar closes itself
   };
 
-  
-  const extractIdentifiers = (pd: Record<string, string>) => {
-    const identifiers: { email?: string; phone?: string; fullName?: string; [k: string]: string | undefined } = {};
-    for (const [k, v] of Object.entries(pd)) {
-      const key = k.toLowerCase();
-      if (!identifiers.email && /email/.test(key)) identifiers.email = v;
-      else if (!identifiers.phone && /(phone|mobile|contact|tel)/.test(key)) identifiers.phone = v.replace(/\D/g, "");
-      else if (!identifiers.name && /(fullName|name|full ?name)/.test(key)) identifiers.fullName = v;
-      else identifiers[k] = v; // keep additional fields for create payload
+  // Helper function to render nested objects properly
+  const renderNestedValue = (value: any): string => {
+    if (value === null || value === undefined) {
+      return '';
     }
-    return identifiers;
+    
+    if (typeof value === 'string') {
+      return value;
+    }
+    
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+    
+    if (Array.isArray(value)) {
+      return value.join(', ');
+    }
+    
+    if (typeof value === 'object') {
+      // Handle nested objects by converting to readable string
+      const entries = Object.entries(value);
+      if (entries.length === 0) return '';
+      
+      return entries
+        .map(([key, val]) => {
+          const renderedVal = renderNestedValue(val);
+          return `${key}: ${renderedVal}`;
+        })
+        .join(', ');
+    }
+    
+    return String(value);
   };
 
-  // Try to find patients. Backend returns array (maybe empty) per your description.
-  const findPatients = async (ident: { phone?: string; name?: string; [k: string]: any }) => {
-  try {
-    // wrap the payload in `extracted` to match your current backend
-    const payload = ident;
-
-
-    const resp = await api.post("/api/doctor/me/patients/matches/preview", payload, {
-      headers: { "Content-Type": "application/json" },
-    });
-
-    if (Array.isArray(resp.data)) {
-
-      return resp.data as any[]; // keep the same return type you already use (Patient[])
-    }
-
-
-    return [];
-  } catch (err) {
-
-
-    return []; // silently fail as before
-  }
-};
-
-
-
-  const createPatientFromDetails = async (pd: Record<string, string>) => {
-    const payload: Record<string, any> = {};
-    for (const [k, v] of Object.entries(pd)) {
-      const key = k.toLowerCase().trim();
-      if (/name/.test(key)) payload.fullName = v;
-      else if (/email/.test(key)) payload.email = v;
-      else if (/(phone|mobile|contact|tel)/.test(key)) payload.phone = v.replace(/\D/g, "");
-      else if (/age/.test(key)) payload.age = isNaN(Number(v)) ? v : Number(v);
-      else if (/gender/.test(key)) payload.gender = v;
-      else {
-        payload.meta ??= {};
-        payload.meta[key] = v;
-      }
-    }
-    if (!payload.name) payload.name = Object.values(pd).find(Boolean) ?? "Unknown";
-
-    // console.log("payload before POST", payload)
-
-    const resp = await api.post("/api/doctor/me/patients", payload);
-    return resp.data as Patient;
-  };
-
-  // helper: convert parsed note into DB-friendly text fields
-  
-  const handleCreateFromNoPatientDialog = async (payload: { fullName?: string; age?: string | number; phone?: string; gender?: string }) => {
-  setCreatingFromNoPatientDialog(true);
-  setError(null);
-  try {
-    // create patient on backend using your existing helper
-    // the helper expects a Record<string, string> of patient details; adapt as needed
-    const pdForCreate: Record<string, any> = {};
-    if (payload.fullName) pdForCreate.fullName = payload.fullName;
-    if (payload.age !== undefined && payload.age !== "") pdForCreate.age = isNaN(Number(payload.age)) ? payload.age : Number(payload.age);
-    if (payload.phone) pdForCreate.phone = String(payload.phone).replace(/\D/g, "");
-    if (payload.gender) pdForCreate.gender = payload.gender;
-
-    // You may want to include other meta fields in pdForCreate if available
-    const created = await createPatientFromDetails(pdForCreate);
-
-    // close dialog
-    setNoPatientDialogOpen(false);
-
-    // now attach and save note to created patient (reuse confirmSaveWithPatient for consistency)
-    await confirmSaveWithPatient(created);
-
-    // optionally show toast (if you use showToast)
-    if (typeof showToast === "function") showToast("Note saved and attached to newly created patient.", "success");
-    onNoteSaved?.();
-  } catch (err: any) {
-    setError(err?.response?.data?.message ?? err.message ?? "Failed to create patient and save");
-  } finally {
-    setCreatingFromNoPatientDialog(false);
-  }
-};
-
-
-  const buildClinicalNotePayload = (
-    parsedContent: ParsedNote,
-    _sourceValue: string,
-    opts?: { patientId?: string | null }
-  ) => {
-
-    const payload: any = {
-      // DB fields your backend expects (text/arrays)
-      patientDetails: parsedContent.patientDetails || {},
-      medicalHistory: Array.isArray(parsedContent.medicalHistory) ? parsedContent.medicalHistory : (parsedContent.medicalHistory ? [parsedContent.medicalHistory] : []),
-      problemFaced: Array.isArray(parsedContent.problemFaced) ? parsedContent.problemFaced : (parsedContent.problemFaced ? [parsedContent.problemFaced] : []),
-      findings: Array.isArray(parsedContent.findings) ? parsedContent.findings : (parsedContent.findings ? [parsedContent.findings] : []),
-      diagnosis: Array.isArray(parsedContent.diagnosis) ? parsedContent.diagnosis : (parsedContent.diagnosis ? [parsedContent.diagnosis] : []),
-      investigationsAdvised: Array.isArray(parsedContent.investigationsAdvised) ? parsedContent.investigationsAdvised : (parsedContent.investigationsAdvised ? [parsedContent.investigationsAdvised] : []),
-      doctorInstructions: Array.isArray(parsedContent.doctorInstructions) ? parsedContent.doctorInstructions : (parsedContent.doctorInstructions ? [parsedContent.doctorInstructions] : []),
-      medicationPrescribed: Array.isArray(parsedContent.medicationPrescribed) ? parsedContent.medicationPrescribed : (parsedContent.medicationPrescribed ? [parsedContent.medicationPrescribed] : []),
-    };
-
-    if (opts?.patientId) payload.patientId = opts.patientId;
-
-    return payload;
-  };
-
-  // Updated confirmSaveWithPatient
-  const confirmSaveWithPatient = async (patient: Patient) => {
-    // Called when user confirms which patient to attach the note to
-    const patientId = patient.id ?? patient.patientId ?? null;
-
-    if (!patientId) {
-      setError("Selected patient has no id");
-      return;
-    }
-
-    setShowMatchPicker(false);
-    setSaving(true);
-    setError(null);
-
+  // Search for patient in database
+  const searchPatient = async (patientName: string) => {
+    if (!patientName.trim()) return null;
+    
+    setPatientSearchLoading(true);
     try {
-      const rawContent = editState.raw ?? noteText ?? parsed?.raw ?? "";
-      const parsedContent = editState.parsed ?? parsed ?? { raw: rawContent };
-
-      const payload = buildClinicalNotePayload(parsedContent, source, { patientId });
-
-      // Always create a new note
-      const resp = await api.post("/api/clinical-notes", payload);
-
-      const data = resp.data;
-      const id = data._id ?? data.id ?? null;
-      if (id) setSavedNoteId(id);
-      if (data.raw) setNoteText(data.raw);
-      if (data.parsed) setParsed(data.parsed);
-      showToast("Note saved successfully.", "success");
-      setEditMode(false);
-      onNoteSaved?.();
-    } catch (err: any) {
-      setError(err?.response?.data?.message ?? err.message ?? "Failed to save note");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-// Updated saveNote
-  const saveNote = async () => {
-    setSaving(true);
-    setError(null);
-
-    try {
-      const rawContent = editState.raw ?? noteText ?? parsed?.raw ?? "";
-      const parsedContent = editState.parsed ?? parsed ?? { raw: rawContent };
-
-      const pd = getEffectivePatientDetails();
-      // console.log("Effective patient details:", pd);
-
-      if (pd && Object.keys(pd).length > 0) {
-        const ident = extractIdentifiers(pd);
-
-        const found = await findPatients(ident);
-
-        if (!found || found.length === 0) {
-          const pd = getEffectivePatientDetails();
-          setNoPatientDialogInitial({
-            fullName: pd.fullName ?? "",
-            age: pd.age ?? "",
-            phone: pd.phone ?? "",
-            gender: pd.gender ?? "",
-          });
-          setNoPatientDialogOpen(true);
-          return;
-          
-        } else {
-          // multiple matches — open the picker modal and let doctor choose
-          setMatchedPatients(found);
-          setMatchIndex(0);
-          setShowMatchPicker(true);
-        }
-      } else {
-        // no patient details: just save as before (but still include DB fields)
-
-
-        const payload = buildClinicalNotePayload(parsedContent, source);
-
-        console.log("Saving clinical note (no patient details) payload:", payload);
-
-        const resp = await api.post("/api/clinical-notes", payload);
-
-        const data = resp.data;
-        const id = data._id ?? data.id ?? null;
-        if (id) setSavedNoteId(id);
-        if (data.raw) setNoteText(data.raw);
-        if (data.parsed) setParsed(data.parsed);
-        setEditMode(false);
-        onNoteSaved?.();
-
+      const response = await api.get(`/doctor/me/patients?q=${encodeURIComponent(patientName.trim())}`);
+      const patients = response.data;
+      
+      if (patients && patients.length > 0) {
+        // Return the first matching patient
+        return patients[0];
       }
-    } catch (err: any) {
-      setError(err?.response?.data?.message ?? err.message ?? "Failed to save note");
+      return null;
+    } catch (error) {
+      console.error('Error searching patient:', error);
+      return null;
     } finally {
-      setSaving(false);
+      setPatientSearchLoading(false);
     }
   };
 
-
-
-
-
-  const applyChanges = () => {
-    const rawContent = editState.raw ?? noteText ?? parsed?.raw ?? "";
-    const parsedContent = editState.parsed ?? parsed ?? { raw: rawContent };
-
-    // Commit into main state so UI outside of edit controls updates immediately
-    setParsed(parsedContent);
-    // Keep raw consistent if available
-    if (parsedContent.raw) setNoteText(parsedContent.raw);
-    else setNoteText(rawContent);
-    // keep editMode on — user can continue editing
-
-    showToast("Changes applied successfully.", "success");
-  };
-
-  // New: Reset local edits by re-fetching the note from AWS (uses your fetchNote)
-
-
-
-  // Download / Copy helpers (kept minimal)
-  const handleDownload = () => {
-    if (!noteText) return;
-    const blob = new Blob([noteText], { type: "text/plain;charset=utf-8" });
-    const href = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = href;
-    a.download = `clinical_note_${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(href);
-  };
-
-  const handleCopy = async () => {
-    if (!noteText) return;
-    await navigator.clipboard.writeText(noteText);
-  };
-
-  const handlePdfDownload = async () => {
-    if (!_savedNoteId) {
-      showToast("Please save the note first before generating PDF", "warning");
+  // Save note to database with patient search
+  const handleSave = async () => {
+    const noteToSave = editMode ? editedValues : parsed;
+    if (!noteToSave) return;
+    
+    // Extract patient name from patient details
+    const patientName = noteToSave.patientDetails?.name || 
+                       noteToSave.patientDetails?.Name || 
+                       noteToSave.patientDetails?.fullName || 
+                       noteToSave.patientDetails?.patientName || '';
+    
+    if (!patientName.trim()) {
+      // If no patient name, just save the note
+      saveNoteDirectly(noteToSave);
       return;
     }
     
-    try {
-      const response = await api.get(`/api/clinical-notes/${_savedNoteId}/pdf`, {
-        responseType: 'blob'
-      });
-      
-      const blob = new Blob([response.data], { type: 'application/pdf' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `clinical_note_${_savedNoteId}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      
-      showToast("PDF downloaded successfully", "success");
-    } catch (error: any) {
-      setError(error?.response?.data?.message ?? "Failed to generate PDF");
-      showToast("Failed to generate PDF", "error");
+    // Search for patient
+    const patient = await searchPatient(patientName);
+    
+    if (patient) {
+      // Patient found - show confirmation dialog
+      setFoundPatient(patient);
+      setPatientSearchOpen(true);
+    } else {
+      // No patient found - show create patient dialog
+      setNoPatientFoundOpen(true);
     }
   };
 
-  const handleConfirmReset = async () => {
-    setConfirmResetOpen(false);
-    setResetting(true);
+  // Save note directly (when no patient search needed)
+  const saveNoteDirectly = async (noteToSave: ParsedNote, patientId?: string) => {
+    setSaving(true);
     try {
-      await fetchNote();
-      showToast("Changes reverted to fetched note.", "info");
-    } catch (err: any) {
-      setError(err?.message ?? "Failed to reset");
-      showToast("Failed to reset changes.", "error");
+      const payload = {
+        patientDetails: noteToSave.patientDetails || {},
+        medicalHistory: noteToSave.medicalHistory || [],
+        problemFaced: noteToSave.problemFaced || "",
+        findings: noteToSave.findings || [],
+        diagnosis: noteToSave.diagnosis || [],
+        investigationsAdvised: noteToSave.investigationsAdvised || [],
+        doctorInstructions: noteToSave.doctorInstructions || [],
+        medicationPrescribed: noteToSave.medicationPrescribed || [],
+        ...(patientId && { patientId }) // Add patientId if provided
+      };
+
+      await api.post("/api/clinical-notes", payload);
+      
+      if (editMode) {
+        // Update parsed with edited values and exit edit mode
+        setParsed(noteToSave);
+        setEditMode(false);
+        setEditedValues(null);
+      }
+      
+      showToast("Clinical note saved successfully!", "success");
+      onNoteSaved?.();
+    } catch (error: any) {
+      console.error('Error saving note:', error);
+      showToast(error.response?.data?.message || "Failed to save note", "error");
     } finally {
-      setResetting(false);
+      setSaving(false);
+    }
+  };
+
+  // Handle patient confirmation
+  const handlePatientConfirm = async () => {
+    setPatientSearchOpen(false);
+    const noteToSave = editMode ? editedValues : parsed;
+    if (noteToSave && foundPatient) {
+      await saveNoteDirectly(noteToSave, foundPatient.id);
+    }
+    setFoundPatient(null);
+  };
+
+  // Handle patient confirmation cancel
+  const handlePatientConfirmCancel = () => {
+    setPatientSearchOpen(false);
+    setFoundPatient(null);
+  };
+
+  // Handle create new patient and save
+  const handleCreatePatientAndSave = async (patientData: any) => {
+    setNoPatientFoundOpen(false);
+    
+    try {
+      // Create new patient
+      const patientResponse = await api.post('/doctor/me/patients', patientData);
+      const newPatient = patientResponse.data;
+      
+      // Save note with new patient ID
+      const noteToSave = editMode ? editedValues : parsed;
+      if (noteToSave) {
+        await saveNoteDirectly(noteToSave, newPatient.id);
+      }
+    } catch (error: any) {
+      console.error('Error creating patient:', error);
+      showToast(error.response?.data?.message || "Failed to create patient", "error");
+    }
+  };
+
+  // Copy to clipboard
+  const handleCopy = async () => {
+    if (!parsed) return;
+    
+    const sections = [];
+    
+    if (parsed.patientDetails && Object.keys(parsed.patientDetails).length > 0) {
+      sections.push('Patient Details\n' + Object.entries(parsed.patientDetails)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('\n'));
+    }
+    
+    const arrayFields = [
+      { name: 'Medical History', data: parsed.medicalHistory },
+      { name: 'Chief Complaint', data: Array.isArray(parsed.problemFaced) ? parsed.problemFaced : [parsed.problemFaced].filter(Boolean) },
+      { name: 'Findings', data: parsed.findings },
+      { name: 'Diagnosis', data: parsed.diagnosis },
+      { name: 'Investigations Advised', data: parsed.investigationsAdvised },
+      { name: 'Doctor Instructions', data: parsed.doctorInstructions },
+      { name: 'Medication Prescribed', data: parsed.medicationPrescribed }
+    ];
+    
+    arrayFields.forEach(({ name, data }) => {
+      if (data && data.length > 0) {
+        sections.push(`${name}\n${data.map(item => `• ${item}`).join('\n')}`);
+      }
+    });
+    
+    const text = sections.join('\n\n');
+    
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Note copied to clipboard!", "success");
+    } catch (error) {
+      showToast("Failed to copy to clipboard", "error");
+    }
+  };
+
+  // Edit functions
+  const handleEdit = () => {
+    setEditMode(true);
+    setEditedValues(parsed ? { ...parsed } : null);
+  };
+
+  const handleCancelEdit = () => {
+    setEditMode(false);
+    setEditedValues(null);
+  };
+
+  const handleFieldChange = (field: keyof ParsedNote, value: any) => {
+    if (editedValues) {
+      setEditedValues({ ...editedValues, [field]: value });
+    }
+  };
+
+  const handlePatientDetailChange = (key: string, value: string) => {
+    if (editedValues?.patientDetails) {
+      setEditedValues({
+        ...editedValues,
+        patientDetails: { ...editedValues.patientDetails, [key]: value }
+      });
     }
   };
 
@@ -684,550 +316,502 @@ export default function ClinicalNoteViewer({
     setConfirmDiscardOpen(true);
   };
 
-  const handleConfirmDiscard = () => {
+  const confirmDiscard = () => {
     setConfirmDiscardOpen(false);
     onNoteDiscarded?.();
-    showToast("Note discarded.", "info");
   };
 
-  // helpers for editing parsed fields
-  const setParsedField = (updater: (p: ParsedNote | undefined) => ParsedNote | undefined) => {
-    setEditState((s) => ({ ...s, parsed: updater(s.parsed ?? parsed ?? { raw: "" }) }));
-  };
-
-  // helper: pick first available key from patient record, fall back to "Not mentioned"
-  const pickPatientField = (patient: Record<string, any> | undefined, keys: string[]) => {
-    if (!patient) return "Not mentioned";
-    for (const k of keys) {
-      const v = patient[k];
-      if (v !== undefined && v !== null) {
-        const s = String(v).trim();
-        if (s !== "") return s;
-      }
-    }
-    return "Not mentioned";
-  };
-
-  // optional: normalize phone (remove weird chars) but preserve if not present
-  const formatPhone = (raw?: string) => {
-    if (!raw) return "Not mentioned";
-    const s = String(raw).trim();
-    if (!s) return "Not mentioned";
-    // keep international +, digits, spaces, hyphens for readability
-    const cleaned = s.replace(/[^\d+() \-]/g, "");
-    return cleaned || "Not mentioned";
-  };
-
-
-  const renderKV = (kv?: Record<string, string>) => {
-    if (!kv || Object.keys(kv).length === 0)
-      return <Typography variant="body2" color="textSecondary">—</Typography>;
-
+  if (error) {
     return (
-      <List dense>
-        {Object.entries(kv).map(([k, v]) => (
-          <ListItem key={k} className="py-0">
-            <ListItemText
-              primary={<span className="font-medium text-sm text-slate-700">{k}</span>}
-              secondary={<span className="text-sm text-slate-800 whitespace-pre-wrap">{v}</span>}
-            />
-          </ListItem>
-        ))}
-      </List>
+      <Card className={className}>
+        <CardContent>
+          <Typography color="error">{error}</Typography>
+        </CardContent>
+      </Card>
     );
-  };
+  }
 
-  const renderKVEditable = (kv?: Record<string, string>) => {
-    const kvState = editState.parsed?.patientDetails ?? kv ?? {};
-    const entries = Object.entries(kvState);
+  if (!parsed) {
     return (
-      <Box>
-        {entries.length === 0 && (
-          <Typography variant="body2" color="textSecondary">No patient details — add one below</Typography>
-        )}
-        <Box className="flex flex-col gap-2">
-          {entries.map(([k, v], idx) => (
-            <Box key={k + idx} className="flex gap-2 items-start">
-              <TextField
-                size="small"
-                label="Key"
-                value={k}
-                onChange={(e) => {
-                  const newKey = e.target.value;
-                  setParsedField((cur) => {
-                    const pd = { ...(cur?.patientDetails ?? {}) };
-                    // rename key
-                    delete pd[k];
-                    pd[newKey] = v;
-                    return { ...(cur ?? {}), patientDetails: pd };
-                  });
-                }}
-              />
-              <TextField
-                size="small"
-                label="Value"
-                value={v}
-                fullWidth
-                onChange={(e) => {
-                  const newVal = e.target.value;
-                  setParsedField((cur) => {
-                    const pd = { ...(cur?.patientDetails ?? {}) };
-                    pd[k] = newVal;
-                    return { ...(cur ?? {}), patientDetails: pd };
-                  });
-                }}
-              />
-              <Button
-                size="small"
-                onClick={() =>
-                  setParsedField((cur) => {
-                    const pd = { ...(cur?.patientDetails ?? {}) };
-                    delete pd[k];
-                    return { ...(cur ?? {}), patientDetails: pd };
-                  })
-                }
-              >
-                Remove
-              </Button>
-            </Box>
-          ))}
-
-          <Button
-            size="small"
-            onClick={() =>
-              setParsedField((cur) => {
-                const pd = { ...(cur?.patientDetails ?? {}) };
-                let i = 1;
-                let candidate = "new_key";
-                while (pd[candidate]) {
-                  candidate = `new_key_${i++}`;
-                }
-                pd[candidate] = "";
-                return { ...(cur ?? {}), patientDetails: pd };
-              })
-            }
-          >
-            Add field
-          </Button>
-        </Box>
-      </Box>
+      <Card className={className}>
+        <CardContent>
+          <Typography color="textSecondary">No clinical note data available</Typography>
+        </CardContent>
+      </Card>
     );
-  };
+  }
 
-  const renderList = (items?: string[]) => {
-    if (!items || items.length === 0)
-      return <Typography variant="body2" color="textSecondary">—</Typography>;
-
-    return (
-      <List dense>
-        {items.map((it, i) => (
-          <ListItem key={i} className="py-0.5">
-            <ListItemText primary={<Typography variant="body2" className="whitespace-pre-wrap">{it}</Typography>} />
-          </ListItem>
-        ))}
-      </List>
-    );
-  };
-
-  const renderListEditable = (list: string[] | undefined, keyName: keyof ParsedNote) => {
-    const arr = editState.parsed?.[keyName as keyof ParsedNote] as string[] | undefined ?? (list ?? []);
-    return (
-      <Box className="flex flex-col gap-2">
-        {arr.map((it, i) => (
-          <Box key={i} className="flex gap-2 items-start">
-            <TextField
-              size="small"
-              value={it}
-              fullWidth
-              onChange={(e) =>
-                setParsedField((cur) => {
-                  const copy = { ...(cur ?? {}) } as ParsedNote;
-                  const curArr = [...(copy[keyName as keyof ParsedNote] as string[] | undefined ?? arr)];
-                  curArr[i] = e.target.value;
-                  (copy as any)[keyName] = curArr;
-                  return copy;
-                })
-              }
-            />
-            <Button
-              size="small"
-              onClick={() =>
-                setParsedField((cur) => {
-                  const copy = { ...(cur ?? {}) } as ParsedNote;
-                  const curArr = [...(copy[keyName as keyof ParsedNote] as string[] | undefined ?? arr)];
-                  curArr.splice(i, 1);
-                  (copy as any)[keyName] = curArr;
-                  return copy;
-                })
-              }
-            >
-              Remove
-            </Button>
-          </Box>
-        ))}
-        <Button
-          size="small"
-          onClick={() =>
-            setParsedField((cur) => {
-              const copy = { ...(cur ?? {}) } as ParsedNote;
-              const curArr = [...(copy[keyName as keyof ParsedNote] as string[] | undefined ?? arr), ""];
-              (copy as any)[keyName] = curArr;
-              return copy;
-            })
-          }
-        >
-          Add
-        </Button>
-      </Box>
-    );
-  };
-
-  // ---------------- RENDER ----------------
   return (
-    <div className="w-full min-h-screen bg-slate-50 flex flex-col">
-      <Card className={`${className ?? "w-full mx-auto my-0"} shadow-none border-none`}>
-        <CardContent className="flex flex-col p-4 md:p-6">
-          {/* Header (centered at top) */}
-          <header className="flex-shrink-0">
-            <Typography variant="h5" align="center" className="font-semibold">
-              Clinical Note
-            </Typography>
-          </header>
-
-          {/* Main content: stretches and scrolls */}
-          <main className="flex-grow mt-4">
-            {/* 2 equal columns on md+ screens, single column on mobile */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 min-h-[400px] md:min-h-[600px]">
-              {/* Left column */}
-              <div className="space-y-6">
-                {/* Patient Details */}
-                <div className="rounded-lg border p-3 md:p-4 bg-white">
-                  <div className="flex items-center justify-between">
-                    <Typography variant="subtitle2" className="text-slate-700">
-                      Patient Details
-                    </Typography>
-                  </div>
-                  <Divider className="my-2" />
-                  {loading ? (
-                    <div className="flex items-center gap-2">
-                      <CircularProgress size={18} />
-                      <Typography variant="body2">Loading…</Typography>
-                    </div>
-                  ) : editMode ? (
-                    renderKVEditable(parsed?.patientDetails)
-                  ) : (
-                    renderKV(parsed?.patientDetails)
-                  )}
-                </div>
-
-                {/* Medical History */}
-                <div className="rounded-lg border p-3 md:p-4 bg-white">
-                  <Typography variant="subtitle2" className="text-slate-700">
-                    Medical History
-                  </Typography>
-                  <Divider className="my-2" />
-                  {loading ? (
-                    <Typography variant="body2">Loading…</Typography>
-                  ) : editMode ? (
-                    renderListEditable(parsed?.medicalHistory, "medicalHistory")
-                  ) : (
-                    renderList(parsed?.medicalHistory)
-                  )}
-                </div>
-
-               {/* Findings */}
-                <div className="rounded-lg border p-3 md:p-4 bg-white">
-                  <Typography variant="subtitle2" className="text-slate-700">
-                    Findings
-                  </Typography>
-                  <Divider className="my-2" />
-                  {loading ? (
-                    <Typography variant="body2">Loading…</Typography>
-                  ) : editMode ? (
-                    renderListEditable(parsed?.findings, "findings")
-                  ) : (
-                    renderList(parsed?.findings)
-                  )}
-                </div>
-
-                {/* Diagnosis */}
-                <div className="rounded-lg border p-3 md:p-4 bg-white">
-                  <Typography variant="subtitle2" className="text-slate-700">
-                    Diagnosis
-                  </Typography>
-                  <Divider className="my-2" />
-                  {loading ? (
-                    <Typography variant="body2">Loading…</Typography>
-                  ) : editMode ? (
-                    renderListEditable(parsed?.diagnosis, "diagnosis")
-                  ) : (
-                    renderList(parsed?.diagnosis)
-                  )}
-                </div>
-
-                {/* Investigations Advised */}
-                <div className="rounded-lg border p-3 md:p-4 bg-white">
-                  <Typography variant="subtitle2" className="text-slate-700">
-                    Investigations Advised
-                  </Typography>
-                  <Divider className="my-2" />
-                  {loading ? (
-                    <Typography variant="body2">Loading…</Typography>
-                  ) : editMode ? (
-                    renderListEditable(parsed?.investigationsAdvised, "investigationsAdvised")
-                  ) : (
-                    renderList(parsed?.investigationsAdvised)
-                  )}
-                </div>
-
-
-              </div>
-
-              {/* Right column */}
-              <div className="space-y-6">
-               {/* Problem Faced */}
-                <div className="rounded-lg border p-3 md:p-4 bg-white">
-                  <Typography variant="subtitle2" className="text-slate-700">
-                    Problem Faced
-                  </Typography>
-                  <Divider className="my-2" />
-                  {loading ? (
-                    <Typography variant="body2">Loading…</Typography>
-                  ) : editMode ? (
-                    renderListEditable(parsed?.problemFaced as string[] | undefined, "problemFaced")
-                  ) : (
-                    // problemFaced can be string or array — normalize for display:
-                    Array.isArray(parsed?.problemFaced)
-                      ? renderList(parsed?.problemFaced as string[])
-                      : renderList(typeof parsed?.problemFaced === "string" ? (parsed?.problemFaced as string).split("\n").filter(Boolean) : [])
-                  )}
-                </div>
-
-                <div className="rounded-lg border p-3 md:p-4 bg-white">
-                  <div className="flex items-center justify-between">
-                    <Typography variant="subtitle2" className="text-slate-700">
-                      Doctor Instructions
-                    </Typography>
-                    <Chip
-                      size="small"
-                      label={
-                        parsed?.doctorInstructions?.length
-                          ? `${parsed?.doctorInstructions.length}`
-                          : "—"
-                      }
-                    />
-                  </div>
-                  <Divider className="my-2" />
-                  {loading ? (
-                    <Typography variant="body2">Loading…</Typography>
-                  ) : editMode ? (
-                    renderListEditable(parsed?.doctorInstructions, "doctorInstructions")
-                  ) : (
-                    renderList(parsed?.doctorInstructions)
-                  )}
-                </div>
-
-                <div className="rounded-lg border p-3 md:p-4 bg-white">
-                  <div className="flex items-center justify-between">
-                    <Typography variant="subtitle2" className="text-slate-700">
-                      Medication Prescribed
-                    </Typography>
-                    <Chip
-                      size="small"
-                      label={
-                        parsed?.medicationPrescribed?.length
-                          ? `${parsed?.medicationPrescribed.length}`
-                          : "—"
-                      }
-                    />
-                  </div>
-                  <Divider className="my-2" />
-                  {loading ? (
-                    <Typography variant="body2">Loading…</Typography>
-                  ) : editMode ? (
-                    renderListEditable(parsed?.medicationPrescribed, "medicationPrescribed")
-                  ) : (
-                    renderList(parsed?.medicationPrescribed)
-                  )}
-                </div>
-              </div>
-            </div>
-          </main>
-
-
-          {/* Footer: fixed action row at bottom (always visible) */}
-          <footer className="flex-shrink-0 mt-4 pt-4 border-t -mx-4 md:-mx-6 px-4 md:px-6 pb-4 md:pb-6 bg-white">
-            <div className="max-w-6xl mx-auto flex items-center justify-center gap-2 sm:gap-3 md:gap-4 flex-wrap">
-              <Button size="small" variant={editMode ? "outlined" : "contained"} startIcon={<EditIcon />} onClick={() => setEditMode((v) => !v)}>
-                {editMode ? "Exit Edit" : "Edit"}
-              </Button>
-
-              {/* Apply / Reset only visible in edit mode */}
-              {editMode && (
+    <>
+      <Card className={className}>
+        <CardContent>
+          {/* Header with actions */}
+          <div className="flex justify-between items-center mb-4">
+            <Typography variant="h5">Clinical Note</Typography>
+            <div className="flex gap-2">
+              {!editMode && (
                 <>
-                  <Button size="small" variant="outlined" onClick={applyChanges} disabled={loading}>
-                    Apply changes
+                  <Button
+                    variant="outlined"
+                    startIcon={<ContentCopyIcon />}
+                    onClick={handleCopy}
+                    size="small"
+                  >
+                    Copy
                   </Button>
-
-                  <Button size="small" variant="outlined" onClick={() => setConfirmResetOpen(true)} disabled={loading}>
-                    Reset
+                  <Button
+                    variant="outlined"
+                    startIcon={<EditIcon />}
+                    onClick={handleEdit}
+                    size="small"
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="contained"
+                    startIcon={<SaveIcon />}
+                    onClick={handleSave}
+                    disabled={saving}
+                    size="small"
+                  >
+                    {saving ? <CircularProgress size={16} /> : <SaveIcon />}
+                    Save
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    startIcon={<DeleteIcon />}
+                    onClick={handleDiscardNote}
+                    size="small"
+                  >
+                    Discard
                   </Button>
                 </>
               )}
-
-
-              <Button size="small" variant="contained" color="primary" startIcon={<SaveIcon />} onClick={saveNote} disabled={saving || (!editState.raw && !editState.parsed)}>
-                {saving ? <CircularProgress size={16} /> : "Save"}
-              </Button>
-
-              <Button size="small" variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={handleDiscardNote} disabled={saving}>
-                Discard Note
-              </Button>
-
-              <Button size="small" variant="outlined" startIcon={<FileDownloadIcon />} onClick={handleDownload} disabled={!noteText}>
-                Download
-              </Button>
-
-              <Button size="small" variant="outlined" color="secondary" startIcon={<PictureAsPdfIcon />} onClick={handlePdfDownload} disabled={!_savedNoteId}>
-                Download PDF
-              </Button>
-
-              <Button size="small" variant="outlined" startIcon={<ContentCopyIcon />} onClick={handleCopy} disabled={!noteText}>
-                Copy
-              </Button>
             </div>
-          </footer>
+          </div>
 
-          {/* Error */}
-          {error && (
-            <div className="mt-3 text-sm text-red-600">
-              {error}
+          {editMode && editedValues ? (
+            <div className="space-y-6">
+              <Typography variant="h5" color="primary" gutterBottom>
+                Edit Clinical Note
+              </Typography>
+              
+              {/* Patient Details */}
+              {editedValues.patientDetails && Object.keys(editedValues.patientDetails).length > 0 && (
+                <div>
+                  <Typography variant="h6" color="primary" className="mb-3">
+                    Patient Details
+                  </Typography>
+                  <div className="space-y-2">
+                    {Object.entries(editedValues.patientDetails).map(([key, value]) => (
+                      <div key={key} className="flex items-center gap-3">
+                        <Typography variant="body2" className="w-32 font-medium text-gray-700">
+                          {key} -
+                        </Typography>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          value={value}
+                          onChange={(e) => handlePatientDetailChange(key, e.target.value)}
+                          variant="outlined"
+                          className="flex-1"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Medical History */}
+              {editedValues.medicalHistory && (
+                <div>
+                  <Typography variant="body2" className="w-32 font-medium text-gray-700 mb-2">
+                    Medical History -
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={3}
+                    value={Array.isArray(editedValues.medicalHistory) ? editedValues.medicalHistory.join(', ') : editedValues.medicalHistory}
+                    onChange={(e) => handleFieldChange('medicalHistory', e.target.value.split(', ').filter(Boolean))}
+                    variant="outlined"
+                    placeholder="Enter medical history (comma-separated)"
+                  />
+                </div>
+              )}
+
+              {/* Chief Complaint */}
+              {editedValues.problemFaced && (
+                <div>
+                  <Typography variant="body2" className="w-32 font-medium text-gray-700 mb-2">
+                    Chief Complaint -
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={2}
+                    value={Array.isArray(editedValues.problemFaced) ? editedValues.problemFaced.join(', ') : editedValues.problemFaced}
+                    onChange={(e) => handleFieldChange('problemFaced', e.target.value)}
+                    variant="outlined"
+                    placeholder="Enter chief complaint"
+                  />
+                </div>
+              )}
+
+              {/* Findings */}
+              {editedValues.findings && (
+                <div>
+                  <Typography variant="body2" className="w-32 font-medium text-gray-700 mb-2">
+                    Findings -
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={3}
+                    value={Array.isArray(editedValues.findings) ? editedValues.findings.join(', ') : editedValues.findings}
+                    onChange={(e) => handleFieldChange('findings', e.target.value.split(', ').filter(Boolean))}
+                    variant="outlined"
+                    placeholder="Enter findings (comma-separated)"
+                  />
+                </div>
+              )}
+
+              {/* Diagnosis */}
+              {editedValues.diagnosis && (
+                <div>
+                  <Typography variant="body2" className="w-32 font-medium text-gray-700 mb-2">
+                    Diagnosis -
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={2}
+                    value={Array.isArray(editedValues.diagnosis) ? editedValues.diagnosis.join(', ') : editedValues.diagnosis}
+                    onChange={(e) => handleFieldChange('diagnosis', e.target.value.split(', ').filter(Boolean))}
+                    variant="outlined"
+                    placeholder="Enter diagnosis (comma-separated)"
+                  />
+                </div>
+              )}
+
+              {/* Investigations Advised */}
+              {editedValues.investigationsAdvised && (
+                <div>
+                  <Typography variant="body2" className="w-32 font-medium text-gray-700 mb-2">
+                    Investigations Advised -
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={2}
+                    value={Array.isArray(editedValues.investigationsAdvised) ? editedValues.investigationsAdvised.join(', ') : editedValues.investigationsAdvised}
+                    onChange={(e) => handleFieldChange('investigationsAdvised', e.target.value.split(', ').filter(Boolean))}
+                    variant="outlined"
+                    placeholder="Enter investigations (comma-separated)"
+                  />
+                </div>
+              )}
+
+              {/* Doctor Instructions */}
+              {editedValues.doctorInstructions && (
+                <div>
+                  <Typography variant="body2" className="w-32 font-medium text-gray-700 mb-2">
+                    Doctor Instructions -
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={3}
+                    value={Array.isArray(editedValues.doctorInstructions) ? editedValues.doctorInstructions.join(', ') : editedValues.doctorInstructions}
+                    onChange={(e) => handleFieldChange('doctorInstructions', e.target.value.split(', ').filter(Boolean))}
+                    variant="outlined"
+                    placeholder="Enter instructions (comma-separated)"
+                  />
+                </div>
+              )}
+
+              {/* Medication Prescribed */}
+              {editedValues.medicationPrescribed && (
+                <div>
+                  <Typography variant="body2" className="w-32 font-medium text-gray-700 mb-2">
+                    Medication Prescribed -
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={3}
+                    value={Array.isArray(editedValues.medicationPrescribed) ? editedValues.medicationPrescribed.join(', ') : editedValues.medicationPrescribed}
+                    onChange={(e) => handleFieldChange('medicationPrescribed', e.target.value.split(', ').filter(Boolean))}
+                    variant="outlined"
+                    placeholder="Enter medications (comma-separated)"
+                  />
+                </div>
+              )}
+
+              {/* Edit Actions */}
+              <div className="flex gap-3 mt-6 pt-4 border-t">
+                <Button
+                  variant="contained"
+                  startIcon={<SaveIcon />}
+                  onClick={handleSave}
+                  disabled={saving}
+                  size="medium"
+                >
+                  {saving ? <CircularProgress size={16} /> : <SaveIcon />}
+                  Save Changes
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={handleCancelEdit}
+                  size="medium"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Patient Details */}
+              {parsed.patientDetails && Object.keys(parsed.patientDetails).length > 0 && (
+                <div>
+                  <Typography variant="h6" color="primary">
+                    Patient Details
+                  </Typography>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    {Object.entries(parsed.patientDetails).map(([key, value]) => (
+                      <div key={key}>
+                        <Typography variant="subtitle2" color="textSecondary">
+                          {key}
+                        </Typography>
+                        <Typography variant="body2">{value}</Typography>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Medical History */}
+              {parsed.medicalHistory && parsed.medicalHistory.length > 0 && (
+                <div>
+                  <Typography variant="h6" color="primary">
+                    Medical History
+                  </Typography>
+                  <div className="mt-2">
+                    {parsed.medicalHistory.map((item, index) => (
+                      <Typography key={index} variant="body2" className="mb-1">
+                        • {item}
+                      </Typography>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Problem Faced */}
+              {parsed.problemFaced && (
+                <div>
+                  <Typography variant="h6" color="primary">
+                    Chief Complaint
+                  </Typography>
+                  <Typography variant="body2" className="mt-2">
+                    {Array.isArray(parsed.problemFaced) 
+                      ? parsed.problemFaced.join(', ')
+                      : parsed.problemFaced
+                    }
+                  </Typography>
+                </div>
+              )}
+
+              {/* Findings */}
+              {parsed.findings && (
+                <div>
+                  <Typography variant="h6" color="primary">
+                    Findings
+                  </Typography>
+                  <div className="mt-2">
+                    {Array.isArray(parsed.findings) 
+                      ? parsed.findings.map((finding, index) => (
+                          <Typography key={index} variant="body2" className="mb-1">
+                            • {finding}
+                          </Typography>
+                        ))
+                      : typeof parsed.findings === 'object' 
+                        ? Object.entries(parsed.findings).map(([key, value]) => (
+                            <Typography key={key} variant="body2" className="mb-1">
+                              • <strong>{key}:</strong> {renderNestedValue(value)}
+                            </Typography>
+                          ))
+                        : (
+                            <Typography variant="body2" className="mb-1">
+                              • {parsed.findings}
+                            </Typography>
+                        )
+                    }
+                  </div>
+                </div>
+              )}
+
+              {/* Diagnosis */}
+              {parsed.diagnosis && (
+                <div>
+                  <Typography variant="h6" color="primary">
+                    Diagnosis
+                  </Typography>
+                  <div className="mt-2">
+                    {Array.isArray(parsed.diagnosis) 
+                      ? parsed.diagnosis.map((diagnosis, index) => (
+                          <Typography key={index} variant="body2" className="mb-1">
+                            • {diagnosis}
+                          </Typography>
+                        ))
+                      : typeof parsed.diagnosis === 'object' 
+                        ? Object.entries(parsed.diagnosis).map(([key, value]) => (
+                            <Typography key={key} variant="body2" className="mb-1">
+                              • <strong>{key}:</strong> {renderNestedValue(value)}
+                            </Typography>
+                          ))
+                        : (
+                            <Typography variant="body2" className="mb-1">
+                              • {parsed.diagnosis}
+                            </Typography>
+                        )
+                    }
+                  </div>
+                </div>
+              )}
+
+              {/* Investigations Advised */}
+              {parsed.investigationsAdvised && (
+                <div>
+                  <Typography variant="h6" color="primary">
+                    Investigations Advised
+                  </Typography>
+                  <div className="mt-2">
+                    {Array.isArray(parsed.investigationsAdvised) 
+                      ? parsed.investigationsAdvised.map((investigation, index) => (
+                          <Typography key={index} variant="body2" className="mb-1">
+                            • {investigation}
+                          </Typography>
+                        ))
+                      : typeof parsed.investigationsAdvised === 'object' 
+                        ? Object.entries(parsed.investigationsAdvised).map(([key, value]) => (
+                            <Typography key={key} variant="body2" className="mb-1">
+                              • <strong>{key}:</strong> {renderNestedValue(value)}
+                            </Typography>
+                          ))
+                        : (
+                            <Typography variant="body2" className="mb-1">
+                              • {parsed.investigationsAdvised}
+                            </Typography>
+                        )
+                    }
+                  </div>
+                </div>
+              )}
+
+              {/* Doctor Instructions */}
+              {parsed.doctorInstructions && (
+                <div>
+                  <Typography variant="h6" color="primary">
+                    Doctor Instructions
+                  </Typography>
+                  <div className="mt-2">
+                    {Array.isArray(parsed.doctorInstructions) 
+                      ? parsed.doctorInstructions.map((instruction, index) => (
+                          <Typography key={index} variant="body2" className="mb-1">
+                            • {instruction}
+                          </Typography>
+                        ))
+                      : typeof parsed.doctorInstructions === 'object' 
+                        ? Object.entries(parsed.doctorInstructions).map(([key, value]) => (
+                            <Typography key={key} variant="body2" className="mb-1">
+                              • <strong>{key}:</strong> {renderNestedValue(value)}
+                            </Typography>
+                          ))
+                        : (
+                            <Typography variant="body2" className="mb-1">
+                              • {parsed.doctorInstructions}
+                            </Typography>
+                        )
+                    }
+                  </div>
+                </div>
+              )}
+
+              {/* Medication Prescribed */}
+              {parsed.medicationPrescribed && (
+                <div>
+                  <Typography variant="h6" color="primary">
+                    Medication Prescribed
+                  </Typography>
+                  <div className="mt-2">
+                    {Array.isArray(parsed.medicationPrescribed) 
+                      ? parsed.medicationPrescribed.map((medication, index) => (
+                          <Typography key={index} variant="body2" className="mb-1">
+                            • {medication}
+                          </Typography>
+                        ))
+                      : typeof parsed.medicationPrescribed === 'object' 
+                        ? Object.entries(parsed.medicationPrescribed).map(([key, value]) => (
+                            <Typography key={key} variant="body2" className="mb-1">
+                              • <strong>{key}:</strong> {renderNestedValue(value)}
+                            </Typography>
+                          ))
+                        : (
+                            <Typography variant="body2" className="mb-1">
+                              • {parsed.medicationPrescribed}
+                            </Typography>
+                        )
+                    }
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Match picker dialog */}
-      <Dialog open={showMatchPicker} onClose={() => setShowMatchPicker(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Matched Patients</DialogTitle>
-        <DialogContent>
-          {matchedPatients.length === 0 ? (
-            <Typography>No matches</Typography>
-          ) : (
-            <Box className="flex flex-col gap-3">
-              <Box className="flex items-start gap-2">
-                <IconButton disabled={matchIndex <= 0} onClick={() => setMatchIndex((i) => Math.max(0, i - 1))}>
-                  <ArrowBackIcon />
-                </IconButton>
+      {/* Toast */}
+      <SnackbarToast
+        open={toastOpen}
+        message={toastMessage}
+        severity={toastSeverity}
+        onClose={() => setToastOpen(false)}
+      />
 
-                <Box className="flex-1">
-                  <Typography variant="subtitle1" className="font-medium">{matchedPatients[matchIndex].name ?? matchedPatients[matchIndex].fullName ?? matchedPatients[matchIndex].displayName ?? `Patient #${matchIndex + 1}`}</Typography>
-                  {/* render patient details using same renderer (but it's a patient object) */}
-                  <Box className="mt-2">
-                    {(() => {
-                      const p = matchedPatients[matchIndex] ?? {};
-                      const displayName = pickPatientField(p, ["name", "fullName", "displayName"]);
-                      const gender = pickPatientField(p, ["gender", "sex"]);
-                      const phoneRaw = pickPatientField(p, ["phone", "mobile", "contact", "telephone", "tel"]);
-                      const phone = phoneRaw === "Not mentioned" ? "Not mentioned" : formatPhone(phoneRaw);
-                      const age = pickPatientField(p, ["age", "years"]);
+      {/* Discard Confirmation Dialog */}
+      <ConfirmDialog
+        open={confirmDiscardOpen}
+        title="Discard Clinical Note"
+        description="Are you sure you want to discard this clinical note? This action cannot be undone."
+        confirmLabel="Discard"
+        cancelLabel="Cancel"
+        onConfirm={confirmDiscard}
+        onCancel={() => setConfirmDiscardOpen(false)}
+      />
 
-                      return (
-                        <List dense>
-                          <ListItem className="py-0">
-                            <ListItemText primary={<span className="font-medium text-sm text-slate-700">Name</span>} secondary={<span className="text-sm text-slate-800">{displayName}</span>} />
-                          </ListItem>
+      {/* Patient Found Confirmation Dialog */}
+      <ConfirmDialog
+        open={patientSearchOpen}
+        title="Patient Found"
+        description={`Found matching patient: ${foundPatient?.fullName || foundPatient?.name || 'Unknown'} (${foundPatient?.age || 'Unknown'}, ${foundPatient?.gender || 'Unknown'}). Do you want to attach this clinical note to this patient?`}
+        confirmLabel="Yes, Attach Note"
+        cancelLabel="Cancel"
+        onConfirm={handlePatientConfirm}
+        onCancel={handlePatientConfirmCancel}
+        loading={patientSearchLoading}
+      />
 
-                          <ListItem className="py-0">
-                            <ListItemText primary={<span className="font-medium text-sm text-slate-700">Gender</span>} secondary={<span className="text-sm text-slate-800">{gender}</span>} />
-                          </ListItem>
-
-                          <ListItem className="py-0">
-                            <ListItemText primary={<span className="font-medium text-sm text-slate-700">Phone</span>} secondary={<span className="text-sm text-slate-800">{phone}</span>} />
-                          </ListItem>
-
-                          <ListItem className="py-0">
-                            <ListItemText primary={<span className="font-medium text-sm text-slate-700">Age</span>} secondary={<span className="text-sm text-slate-800">{age}</span>} />
-                          </ListItem>
-                        </List>
-                      );
-                    })()}
-                    </Box>
-
-                </Box>
-                <IconButton disabled={matchIndex >= matchedPatients.length - 1} onClick={() => setMatchIndex((i) => Math.min(matchedPatients.length - 1, i + 1))}>
-                  <ArrowForwardIcon />
-                </IconButton>
-              </Box>
-
-              <Typography variant="body2" color="textSecondary">Use the arrows to browse matches. Click "Use & Save" to attach the note to the selected patient. Or create a new patient from the note details.</Typography>
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowMatchPicker(false)}>Cancel</Button>
-          <Button onClick={async () => {
-            // create new patient from parsed details and save
-            try {
-              setCreatingPatient(true);
-              const pd = getEffectivePatientDetails();
-              const created = await createPatientFromDetails(pd);
-              await confirmSaveWithPatient(created);
-            } catch (err: any) {
-              setError(err?.response?.data?.message ?? err.message ?? 'Failed to create patient');
-            } finally {
-              setCreatingPatient(false);
-            }
-          }} disabled={creatingPatient}>Create new & Save</Button>
-
-          <Button onClick={() => matchedPatients[matchIndex] && confirmSaveWithPatient(matchedPatients[matchIndex])} variant="contained" color="primary" disabled={matchedPatients.length === 0}>
-            Use & Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Confirm Reset dialog */}
-    <ConfirmDialog
-      open={confirmResetOpen}
-      title="Reset changes?"
-      description="This will discard all local edits and re-fetch the note from AWS. Are you sure?"
-      confirmLabel="Reset"
-      cancelLabel="Cancel"
-      onConfirm={handleConfirmReset}
-      onCancel={() => setConfirmResetOpen(false)}
-      loading={resetting}
-    />
-
-    {/* Toast */}
-    <SnackbarToast
-      open={toastOpen}
-      onClose={() => setToastOpen(false)}
-      message={toastMessage}
-      severity={toastSeverity}
-    />
-
-    <NoPatientFoundDialog
-      open={noPatientDialogOpen}
-      initial={noPatientDialogInitial ?? undefined}
-      onCancel={() => setNoPatientDialogOpen(false)}
-      onCreateAndSave={handleCreateFromNoPatientDialog}
-      loading={creatingFromNoPatientDialog}
-      title="No patient found"
-      description="No existing patient matched the extracted details. Edit these details to create a new patient and attach the note."
-    />
-
-    {/* Discard Note Confirmation Dialog */}
-    <ConfirmDialog
-      open={confirmDiscardOpen}
-      title="Discard Note?"
-      description="Are you sure you want to discard this note? This action cannot be undone."
-      confirmLabel="Discard"
-      cancelLabel="Cancel"
-      onConfirm={handleConfirmDiscard}
-      onCancel={() => setConfirmDiscardOpen(false)}
-    />
-
-
-    </div>
+      {/* No Patient Found Dialog */}
+      <NoPatientFoundDialog
+        open={noPatientFoundOpen}
+        initial={editMode ? editedValues?.patientDetails : parsed?.patientDetails}
+        onCancel={() => setNoPatientFoundOpen(false)}
+        onCreateAndSave={handleCreatePatientAndSave}
+        loading={patientSearchLoading}
+        title="No Patient Found"
+        description="No existing patient matched the extracted details. Create a new patient to attach this clinical note."
+      />
+    </>
   );
 }
