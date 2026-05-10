@@ -73,7 +73,12 @@ export class ClinicalNotesService {
     console.log('Creating clinical note with specific ID:', { noteId, payload });
 
     const note = this.notesCollection.create(payload);
-    return await this.notesCollection.save(note);
+    console.log('🔍 Note entity created before save:', { id: note.id, patientDetails: note.patientDetails });
+    
+    const savedNote = await this.notesCollection.save(note);
+    console.log('✅ Note saved successfully:', { id: savedNote.id, createdAt: savedNote.createdAt });
+    
+    return savedNote;
   }
 
    async findAllForDoctor(doctorId: string): Promise<ClinicalNote[]> {

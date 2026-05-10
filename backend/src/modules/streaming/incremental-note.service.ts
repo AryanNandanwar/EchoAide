@@ -202,12 +202,35 @@ Please provide the clinical note in the following JSON format:
       }
       
       // Fix common JSON formatting issues before parsing
-      const originalCleaned = cleanedResponse;
-
+      let sanitizedResponse = cleanedResponse;
       
-    
+      // Fix invalid property names that start with hyphens (common LLM output issue)
+      sanitizedResponse = sanitizedResponse.replace(/"(-\s*[^"]+)":/g, (match, propName) => {
+        // Remove hyphen and clean up the property name
+        const cleanName = propName.replace(/^-\s*/, '').trim();
+        return `"${cleanName}":`;
+      });
+      
+      // Fix other common JSON issues
+      sanitizedResponse = sanitizedResponse.replace(/,\s*}/g, '}'); // Remove trailing commas
+      sanitizedResponse = sanitizedResponse.replace(/,\s*]/g, ']'); // Remove trailing commas in arrays
+      
+      // Escape control characters in JSON string values
+      sanitizedResponse = sanitizedResponse.replace(/"([^"]*)"/g, (match, content) => {
+        // Escape newlines, tabs, and other control characters within string values
+        const escaped = content
+          .replace(/\\/g, '\\\\') // Escape backslashes first
+          .replace(/"/g, '\\"') // Escape quotes
+          .replace(/\n/g, '\\n') // Escape newlines
+          .replace(/\r/g, '\\r') // Escape carriage returns
+          .replace(/\t/g, '\\t'); // Escape tabs
+        return `"${escaped}"`;
+      });
+      
+      this.logger.debug('Sanitized JSON response:', sanitizedResponse);
+      
       // Try to parse as JSON
-      const note = JSON.parse(originalCleaned);
+      const note = JSON.parse(sanitizedResponse);
       
       this.logger.debug('Parsed note before array conversion:', note);
 

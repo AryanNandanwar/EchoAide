@@ -27,9 +27,9 @@ import ResponsiveAppBar from "../components/navbar";
 type ClinicalNote = {
   id: string;
   createdAt: string;
-  patient: {
+  patient?: {
     fullName: string;
-  };
+  } | null;
   medicalHistory: string;
   problemsFaced: string;
   doctorInstructions: string;
@@ -250,7 +250,7 @@ export default function NotesPage() {
         const searchLower = search.toLowerCase();
         const matchesSearch =
           search === "" ||
-          n.patient.fullName.toLowerCase().includes(searchLower) ||
+          (n.patient?.fullName || '').toLowerCase().includes(searchLower) ||
           n.medicalHistory.toLowerCase().includes(searchLower) ||
           n.problemsFaced.toLowerCase().includes(searchLower) ||
           n.doctorInstructions.toLowerCase().includes(searchLower) ||
@@ -356,7 +356,7 @@ export default function NotesPage() {
                   <div className="flex items-center justify-between">
                     <div>
                       <Typography className="font-semibold text-lg text-slate-800">
-                        {n.patient.fullName}
+                        {n.patient?.fullName || 'Unknown Patient'}
                       </Typography>
                       <Typography variant="caption" className="text-slate-500">
                         Clinical Visit

@@ -239,9 +239,16 @@ export class StreamingService {
         status: 'Draft',
       };
 
+      console.log(`🔍 About to store clinical note for doctor ${doctorId} with noteId: ${noteId}`);
       // Store the clinical note with specific ID
-      await this.clinicalNotesService.createWithId(createDto, doctorId, noteId);
-      this.logger.log(`Clinical note stored successfully for doctor ${doctorId} with noteId: ${noteId}`);
+      try {
+        const savedNote = await this.clinicalNotesService.createWithId(createDto, doctorId, noteId);
+        this.logger.log(`Clinical note stored successfully for doctor ${doctorId} with noteId: ${noteId}`);
+        console.log(`✅ Note confirmed saved with ID: ${savedNote.id}`);
+      } catch (storeError) {
+        console.error(`❌ Failed to store clinical note:`, storeError);
+        throw storeError;
+      }
     } catch (error) {
       this.logger.error(`Failed to store clinical note: ${error.message}`);
       throw error;

@@ -62,18 +62,23 @@ export default function ClinicalNoteViewer({
       console.log('📋 Clinical note received from Supabase:', note);
       // Convert backend note format to ParsedNote format
       const parsedNote: ParsedNote = {
-        patientDetails: note.patientDetails ? JSON.parse(note.patientDetails) : {},
-        medicalHistory: note.medicalHistory ? JSON.parse(note.medicalHistory) : [],
-        problemFaced: note.problemsFaced ? JSON.parse(note.problemsFaced) : '',
-        findings: note.findings ? JSON.parse(note.findings) : [],
-        diagnosis: note.diagnosis ? JSON.parse(note.diagnosis) : [],
-        investigationsAdvised: note.investigationsAdvised ? JSON.parse(note.investigationsAdvised) : [],
-        doctorInstructions: note.doctorInstructions ? JSON.parse(note.doctorInstructions) : [],
-        medicationPrescribed: note.medicationPrescribed ? JSON.parse(note.medicationPrescribed) : [],
-        raw: JSON.stringify(note, null, 2)
+        patientDetails: parsePatientDetails(note.patient_details),
+        medicalHistory: parseStringContent(note.medical_history),
+        problemFaced: parseStringContent(note.problems_faced).join(', '),
+        findings: parseStringContent(note.findings),
+        diagnosis: parseStringContent(note.diagnosis),
+        investigationsAdvised: parseStringContent(note.investigations_advised),
+        doctorInstructions: parseStringContent(note.doctor_instructions),
+        medicationPrescribed: parseStringContent(note.medication_prescribed),
       };
+      console.log('📋 Parsed note data:', parsedNote);
+      console.log('📋 Patient Details:', parsedNote.patientDetails);
+      console.log('📋 Medical History:', parsedNote.medicalHistory);
+      console.log('📋 Problem Faced:', parsedNote.problemFaced);
       setParsed(parsedNote);
       setError(null);
+      // Notify parent that note is ready to reset transcribe bar state
+      onNoteSaved?.();
     },
     onError: (error) => {
       console.error('❌ Error in clinical note subscription:', error);
@@ -82,35 +87,32 @@ export default function ClinicalNoteViewer({
   });
 
   useEffect(() => {
-    // Handle new flow: fetch note by noteId
+    // Handle new flow: noteId is handled by subscription hook
     if (noteId) {
-      console.log('ClinicalNoteViewer: fetching note by ID:', noteId);
-      fetchNote(noteId).catch(error => {
-        console.error('Failed to fetch note:', error);
-        setError('Failed to fetch clinical note');
-      });
+      console.log('ClinicalNoteViewer: noteId provided, subscription hook will handle fetching:', noteId);
       return;
     }
 
     // Handle old flow: use source prop
     console.log('ClinicalNoteViewer: source received:', source);
+    console.log('ClinicalNoteViewer: current parsed state:', parsed);
     if (source && typeof source === 'object') {
       try {
         // Backend now sends data in the correct ParsedNote format
         // Just ensure we have proper defaults for missing fields
         const parsed: ParsedNote = {
-          patientDetails: source.patientDetails || {},
-          medicalHistory: source.medicalHistory || [],
-          problemFaced: source.problemFaced || '',
-          findings: source.findings || [],
-          diagnosis: source.diagnosis || [],
-          investigationsAdvised: source.investigationsAdvised || [],
-          doctorInstructions: source.doctorInstructions || [],
-          medicationPrescribed: source.medicationPrescribed || [],
+          patientDetails: parsePatientDetails(source.patientDetails),
+          medicalHistory: parseStringContent(source.medicalHistory),
+          problemFaced: parseStringContent(source.problemFaced).join(', '),
+          findings: parseStringContent(source.findings),
+          diagnosis: parseStringContent(source.diagnosis),
+          investigationsAdvised: parseStringContent(source.investigationsAdvised),
+          doctorInstructions: parseStringContent(source.doctorInstructions),
+          medicationPrescribed: parseStringContent(source.medicationPrescribed),
           raw: source.raw || JSON.stringify(source, null, 2)
         };
         
-        console.log('ClinicalNoteViewer: parsed result:', parsed);
+        console.log('ClinicalNoteViewer: parsed result from source:', parsed);
         setParsed(parsed);
         setError(null);
       } catch (error) {
@@ -123,12 +125,91 @@ export default function ClinicalNoteViewer({
     }
   }, [source, noteId, fetchNote]);
 
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      // Component cleanup - any additional cleanup can go here
+      console.log('ClinicalNoteViewer: Component cleanup');
+    };
+  }, []);
+
   
   // Helper functions
   const showToast = (message: string, severity: "success" | "info" | "warning" | "error") => {
     setToastMessage(message);
     setToastSeverity(severity);
     setToastOpen(true);
+  };
+
+  // Parse patient details from string format
+  const parsePatientDetails = (patientDetails: any): Record<string, string> => {
+    if (typeof patientDetails === 'object' && patientDetails !== null) {
+      return patientDetails;
+    }
+    
+    if (typeof patientDetails === 'string') {
+      const details: Record<string, string> = {};
+      // Parse "Name: Amol Gaikwad (Daivashala), Age: 16 years, Gender: Female"
+      const parts = patientDetails.split(',').map(part => part.trim());
+      
+      parts.forEach(part => {
+        const match = part.match(/^(Name|Age|Gender|Contact):\s*(.+)$/);
+        if (match) {
+          const [, key, value] = match;
+          details[key.toLowerCase()] = value.trim();
+        }
+      });
+      
+      return details;
+    }
+    
+    return {};
+  };
+
+  // Parse string content into array of entries
+  const parseStringContent = (content: any): string[] => {
+    if (Array.isArray(content)) {
+      return content;
+    }
+    
+    if (typeof content === 'string' && content.trim()) {
+      let processedContent = content.trim();
+      
+      // Handle JSON string format like ["G2P1 - Previous normal delivery\nCurrent pregnancy at 3 months gestation"]
+      if (processedContent.startsWith('[') && processedContent.endsWith(']')) {
+        try {
+          // Try to parse as JSON array
+          const parsed = JSON.parse(processedContent);
+          if (Array.isArray(parsed)) {
+            processedContent = parsed.join('\n');
+          }
+        } catch (e) {
+          // If JSON parsing fails, remove brackets and quotes manually
+          processedContent = processedContent
+            .slice(1, -1) // Remove [ and ]
+            .replace(/^"|"$/g, '') // Remove surrounding quotes
+            .replace(/"/g, '') // Remove all remaining quotes
+            .replace(/^\[|\]$/g, '') // Remove any remaining brackets
+            .replace(/^\[|\]$/g, ''); // Double check for brackets
+        }
+      }
+      
+      // Also handle cases where brackets might be in the middle of the content
+      processedContent = processedContent
+        .replace(/^\[|\]$/g, '') // Remove brackets at start/end
+        .replace(/^"|"$/g, '') // Remove quotes at start/end
+        .replace(/"/g, ''); // Remove all remaining quotes
+      
+      // Split by \n, commas, periods, and other common delimiters
+      const items = processedContent
+        .split(/(?:\\n|\n|,\s*|\.\s*|\r\n)/)
+        .map(item => item.trim())
+        .filter(item => item.length > 0 && item !== 'Not mentioned' && item !== '""');
+      
+      return items;
+    }
+    
+    return [];
   };
 
   // Helper function to render nested objects properly
@@ -236,7 +317,7 @@ export default function ClinicalNoteViewer({
       if (noteId) {
         // New flow: update existing note
         console.log(`📝 Updating existing clinical note: ${noteId}`);
-        await api.put(`/api/clinical-notes/${noteId}`, payload);
+        await api.patch(`/api/clinical-notes/${noteId}`, payload);
       } else {
         // Old flow: create new note
         console.log('📝 NOteId not found');
@@ -467,21 +548,32 @@ export default function ClinicalNoteViewer({
                     Patient Details
                   </Typography>
                   <div className="space-y-2">
-                    {Object.entries(editedValues.patientDetails).map(([key, value]) => (
-                      <div key={key} className="flex items-center gap-3">
-                        <Typography variant="body2" className="w-32 font-medium text-gray-700">
-                          {key} -
-                        </Typography>
-                        <TextField
-                          fullWidth
-                          size="small"
-                          value={value}
-                          onChange={(e) => handlePatientDetailChange(key, e.target.value)}
-                          variant="outlined"
-                          className="flex-1"
-                        />
-                      </div>
-                    ))}
+                    {[
+                      { key: 'name', label: 'Name' },
+                      { key: 'age', label: 'Age' },
+                      { key: 'gender', label: 'Gender' },
+                      { key: 'contact', label: 'Contact' }
+                    ].map(({ key, label }) => {
+                      const value = editedValues.patientDetails?.[key] || 
+                                   editedValues.patientDetails?.[key.charAt(0).toUpperCase() + key.slice(1)] ||
+                                   editedValues.patientDetails?.[key === 'name' ? 'Name' : key === 'age' ? 'Age' : key === 'gender' ? 'Gender' : key === 'contact' ? 'Contact' : ''];
+                      
+                      return (
+                        <div key={key} className="flex items-center gap-3">
+                          <Typography variant="body2" className="w-32 font-medium text-gray-700">
+                            {label} -
+                          </Typography>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            value={value || ''}
+                            onChange={(e) => handlePatientDetailChange(key, e.target.value)}
+                            variant="outlined"
+                            className="flex-1"
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -496,10 +588,10 @@ export default function ClinicalNoteViewer({
                     fullWidth
                     multiline
                     rows={3}
-                    value={Array.isArray(editedValues.medicalHistory) ? editedValues.medicalHistory.join(', ') : editedValues.medicalHistory}
-                    onChange={(e) => handleFieldChange('medicalHistory', e.target.value.split(', ').filter(Boolean))}
+                    value={Array.isArray(editedValues.medicalHistory) ? editedValues.medicalHistory.join('\n') : editedValues.medicalHistory}
+                    onChange={(e) => handleFieldChange('medicalHistory', e.target.value.split('\n').filter(Boolean))}
                     variant="outlined"
-                    placeholder="Enter medical history (comma-separated)"
+                    placeholder="Enter medical history (one item per line)"
                   />
                 </div>
               )}
@@ -514,7 +606,7 @@ export default function ClinicalNoteViewer({
                     fullWidth
                     multiline
                     rows={2}
-                    value={Array.isArray(editedValues.problemFaced) ? editedValues.problemFaced.join(', ') : editedValues.problemFaced}
+                    value={Array.isArray(editedValues.problemFaced) ? editedValues.problemFaced.join('\n') : editedValues.problemFaced}
                     onChange={(e) => handleFieldChange('problemFaced', e.target.value)}
                     variant="outlined"
                     placeholder="Enter chief complaint"
@@ -532,10 +624,10 @@ export default function ClinicalNoteViewer({
                     fullWidth
                     multiline
                     rows={3}
-                    value={Array.isArray(editedValues.findings) ? editedValues.findings.join(', ') : editedValues.findings}
-                    onChange={(e) => handleFieldChange('findings', e.target.value.split(', ').filter(Boolean))}
+                    value={Array.isArray(editedValues.findings) ? editedValues.findings.join('\n') : editedValues.findings}
+                    onChange={(e) => handleFieldChange('findings', e.target.value.split('\n').filter(Boolean))}
                     variant="outlined"
-                    placeholder="Enter findings (comma-separated)"
+                    placeholder="Enter findings (one item per line)"
                   />
                 </div>
               )}
@@ -550,10 +642,10 @@ export default function ClinicalNoteViewer({
                     fullWidth
                     multiline
                     rows={2}
-                    value={Array.isArray(editedValues.diagnosis) ? editedValues.diagnosis.join(', ') : editedValues.diagnosis}
-                    onChange={(e) => handleFieldChange('diagnosis', e.target.value.split(', ').filter(Boolean))}
+                    value={Array.isArray(editedValues.diagnosis) ? editedValues.diagnosis.join('\n') : editedValues.diagnosis}
+                    onChange={(e) => handleFieldChange('diagnosis', e.target.value.split('\n').filter(Boolean))}
                     variant="outlined"
-                    placeholder="Enter diagnosis (comma-separated)"
+                    placeholder="Enter diagnosis (one item per line)"
                   />
                 </div>
               )}
@@ -568,10 +660,10 @@ export default function ClinicalNoteViewer({
                     fullWidth
                     multiline
                     rows={2}
-                    value={Array.isArray(editedValues.investigationsAdvised) ? editedValues.investigationsAdvised.join(', ') : editedValues.investigationsAdvised}
-                    onChange={(e) => handleFieldChange('investigationsAdvised', e.target.value.split(', ').filter(Boolean))}
+                    value={Array.isArray(editedValues.investigationsAdvised) ? editedValues.investigationsAdvised.join('\n') : editedValues.investigationsAdvised}
+                    onChange={(e) => handleFieldChange('investigationsAdvised', e.target.value.split('\n').filter(Boolean))}
                     variant="outlined"
-                    placeholder="Enter investigations (comma-separated)"
+                    placeholder="Enter investigations (one item per line)"
                   />
                 </div>
               )}
@@ -586,10 +678,10 @@ export default function ClinicalNoteViewer({
                     fullWidth
                     multiline
                     rows={3}
-                    value={Array.isArray(editedValues.doctorInstructions) ? editedValues.doctorInstructions.join(', ') : editedValues.doctorInstructions}
-                    onChange={(e) => handleFieldChange('doctorInstructions', e.target.value.split(', ').filter(Boolean))}
+                    value={Array.isArray(editedValues.doctorInstructions) ? editedValues.doctorInstructions.join('\n') : editedValues.doctorInstructions}
+                    onChange={(e) => handleFieldChange('doctorInstructions', e.target.value.split('\n').filter(Boolean))}
                     variant="outlined"
-                    placeholder="Enter instructions (comma-separated)"
+                    placeholder="Enter instructions (one item per line)"
                   />
                 </div>
               )}
@@ -619,12 +711,12 @@ export default function ClinicalNoteViewer({
                                   return parts.join(' ');
                                 })()
                               : String(med)
-                        ).join(', ')
+                        ).join('\n')
                       : editedValues.medicationPrescribed
                     }
-                    onChange={(e) => handleFieldChange('medicationPrescribed', e.target.value.split(', ').filter(Boolean))}
+                    onChange={(e) => handleFieldChange('medicationPrescribed', e.target.value.split('\n').filter(Boolean))}
                     variant="outlined"
-                    placeholder="Enter medications (comma-separated)"
+                    placeholder="Enter medications (one item per line)"
                   />
                 </div>
               )}
@@ -658,15 +750,28 @@ export default function ClinicalNoteViewer({
                   <Typography variant="h6" color="primary">
                     Patient Details
                   </Typography>
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    {Object.entries(parsed.patientDetails).map(([key, value]) => (
-                      <div key={key}>
-                        <Typography variant="subtitle2" color="textSecondary">
-                          {key}
-                        </Typography>
-                        <Typography variant="body2">{value}</Typography>
-                      </div>
-                    ))}
+                  <div className="grid grid-cols-1 gap-2 mt-2">
+                    {[
+                      { key: 'name', label: 'Name' },
+                      { key: 'age', label: 'Age' },
+                      { key: 'gender', label: 'Gender' },
+                      { key: 'contact', label: 'Contact' }
+                    ].map(({ key, label }) => {
+                      const value = parsed.patientDetails?.[key] || 
+                                   parsed.patientDetails?.[key.charAt(0).toUpperCase() + key.slice(1)] ||
+                                   parsed.patientDetails?.[key === 'name' ? 'Name' : key === 'age' ? 'Age' : key === 'gender' ? 'Gender' : key === 'contact' ? 'Contact' : ''];
+                      
+                      if (!value) return null;
+                      
+                      return (
+                        <div key={key} className="flex items-center">
+                          <Typography variant="subtitle2" color="textSecondary" className="w-24">
+                            {label} -
+                          </Typography>
+                          <Typography variant="body2">{value}</Typography>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -688,7 +793,8 @@ export default function ClinicalNoteViewer({
               )}
 
               {/* Problem Faced */}
-              {parsed.problemFaced && (
+              {parsed.problemFaced && 
+               (Array.isArray(parsed.problemFaced) ? parsed.problemFaced.length > 0 : parsed.problemFaced) && (
                 <div>
                   <Typography variant="h6" color="primary">
                     Chief Complaint
@@ -703,7 +809,8 @@ export default function ClinicalNoteViewer({
               )}
 
               {/* Findings */}
-              {parsed.findings && (
+              {parsed.findings && 
+               (Array.isArray(parsed.findings) ? parsed.findings.length > 0 : parsed.findings) && (
                 <div>
                   <Typography variant="h6" color="primary">
                     Findings
@@ -732,7 +839,8 @@ export default function ClinicalNoteViewer({
               )}
 
               {/* Diagnosis */}
-              {parsed.diagnosis && (
+              {parsed.diagnosis && 
+               (Array.isArray(parsed.diagnosis) ? parsed.diagnosis.length > 0 : parsed.diagnosis) && (
                 <div>
                   <Typography variant="h6" color="primary">
                     Diagnosis
@@ -761,7 +869,8 @@ export default function ClinicalNoteViewer({
               )}
 
               {/* Investigations Advised */}
-              {parsed.investigationsAdvised && (
+              {parsed.investigationsAdvised && 
+               (Array.isArray(parsed.investigationsAdvised) ? parsed.investigationsAdvised.length > 0 : parsed.investigationsAdvised) && (
                 <div>
                   <Typography variant="h6" color="primary">
                     Investigations Advised
@@ -790,7 +899,8 @@ export default function ClinicalNoteViewer({
               )}
 
               {/* Doctor Instructions */}
-              {parsed.doctorInstructions && (
+              {parsed.doctorInstructions && 
+               (Array.isArray(parsed.doctorInstructions) ? parsed.doctorInstructions.length > 0 : parsed.doctorInstructions) && (
                 <div>
                   <Typography variant="h6" color="primary">
                     Doctor Instructions
@@ -819,7 +929,8 @@ export default function ClinicalNoteViewer({
               )}
 
               {/* Medication Prescribed */}
-              {parsed.medicationPrescribed && (
+              {parsed.medicationPrescribed && 
+               (Array.isArray(parsed.medicationPrescribed) ? parsed.medicationPrescribed.length > 0 : parsed.medicationPrescribed) && (
                 <div>
                   <Typography variant="h6" color="primary">
                     Medication Prescribed

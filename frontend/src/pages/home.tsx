@@ -3,72 +3,43 @@ import  { useState } from "react";
 import ResponsiveAppBar from "../components/navbar.tsx";
 import AudioRecorder from "../components/transcribeBar.tsx";
 import ClinicalNoteViewer from "../components/ClinicalNoteViewer.tsx";
-import { useSseTranscription } from "../hooks/use-sse-transcription";
-import { type ParsedNote } from "../types/clinical-note";
 
 export default function HomePage() {
-  const [clinicalNote, setClinicalNote] = useState<ParsedNote>({});
+  const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
   const [isGeneratingNote, setIsGeneratingNote] = useState(false);
   const [isNoteReady, setIsNoteReady] = useState(false);
 
-  // SSE hook for final note updates
-  const { connect, disconnect } = useSseTranscription({
-    baseUrl: 'http://localhost:3000',
-    onNoteUpdate: (note) => {
-      console.log("Final note received via SSE:", note);
-      setClinicalNote(note);
-      if (Object.keys(note).length > 0) {
-        setIsGeneratingNote(false);
-        setIsNoteReady(true);
-        // Disconnect SSE immediately after receiving the final note
-        console.log("Final note received, disconnecting SSE");
-        disconnect();
-      }
-    },
-    onError: (error) => {
-      console.error("SSE error:", error);
-    }
-  });
-
-  // Handle real-time transcript updates from AudioRecorder
-  // const handleTranscriptUpdate = (newTranscript: string) => {
-  //   setTranscript(newTranscript);
-  // };
+  // Handle note ID generation from AudioRecorder
+  const handleNoteIdGenerated = (noteId: string) => {
+    console.log("🆔 Note ID generated:", noteId);
+    setCurrentNoteId(noteId);
+    setIsGeneratingNote(true);
+    setIsNoteReady(false);
+  };
 
   // Handle session start from AudioRecorder
   const handleSessionStart = (sessionId: string) => {
-    console.log("Session started, connecting SSE:", sessionId);
-    connect(sessionId);
+    console.log("Session started:", sessionId);
   };
 
   // Handle session end from AudioRecorder
   const handleSessionEnd = () => {
-    console.log("Session ended, waiting for final note before disconnecting SSE");
-    // Wait 10 seconds before disconnecting to allow final note to be received
-    setTimeout(() => {
-      console.log("Disconnecting SSE after timeout");
-      disconnect();
-    }, 10000);
+    console.log("Session ended");
   };
 
-  // Handle final clinical note from AudioRecorder (fallback)
-  // const handleNoteUpdate = (note: Record<string, string>) => {
-  //   console.log("Final note received in home page (fallback):", note);
-  //   setClinicalNote(note);
-  //   if (Object.keys(note).length > 0) {
-  //     setIsGeneratingNote(false);
-  //     setIsNoteReady(true);
-  //   }
-  // };
-
+  // Handle note saved callback
   const handleNoteSaved = () => {
-    setIsNoteReady(false);
-    setClinicalNote({});
+    console.log("Note saved successfully");
+    setIsNoteReady(true);
+    setIsGeneratingNote(false);
   };
 
+  // Handle note discarded callback
   const handleNoteDiscarded = () => {
+    console.log("Note discarded");
+    setCurrentNoteId(null);
     setIsNoteReady(false);
-    setClinicalNote({});
+    setIsGeneratingNote(false);
   };
 
   return (
@@ -89,29 +60,17 @@ export default function HomePage() {
             </p>
           </div>
 
-          
-          {/* {transcript && (
-            <div className="mb-6 px-4 md:px-8 max-w-3xl mx-auto">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <h3 className="text-lg font-semibold text-blue-800 mb-2">Live Transcript</h3>
-                <p className="text-blue-700">{transcript}</p>
-              </div>
-            </div>
-          )} */}
-
-          {/* Clinical Note Display */}
-          {Object.keys(clinicalNote).length > 0 && (
+          {/* Clinical Note Display - using new Supabase flow */}
+          {currentNoteId && (
             <div className="px-4 md:px-8 max-w-3xl mx-auto">
               <ClinicalNoteViewer
-                source={clinicalNote}
+                noteId={currentNoteId}
                 className="w-full"
                 onNoteSaved={handleNoteSaved}
                 onNoteDiscarded={handleNoteDiscarded}
               />
             </div>
           )}
-
-
         </div>
       </main>
 
@@ -122,6 +81,7 @@ export default function HomePage() {
         onSessionStart={handleSessionStart}
         onSessionEnd={handleSessionEnd}
         onNoteSaved={handleNoteSaved}
+        onNoteIdGenerated={handleNoteIdGenerated}
       />
     </div>
   );

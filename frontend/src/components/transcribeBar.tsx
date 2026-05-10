@@ -23,6 +23,7 @@ interface AudioRecorderProps {
   onNoteSaved?: () => void;
   onSessionStart?: (sessionId: string) => void;
   onSessionEnd?: () => void;
+  onNoteIdGenerated?: (noteId: string) => void; // New callback for noteId
   websocketUrl?: string;
   patientId?: string;
 }
@@ -33,6 +34,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   isNoteReady = false,
   onSessionStart,
   onSessionEnd,
+  onNoteIdGenerated,
   websocketUrl = 'http://localhost:3000',
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -128,6 +130,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     try {
       // Generate unique note ID
       const noteId = generateUUID();
+      
+      // Call the callback to pass noteId to parent
+      onNoteIdGenerated?.(noteId);
       
       // Get doctor ID from stored user data
       const doctorId = getDoctorId();

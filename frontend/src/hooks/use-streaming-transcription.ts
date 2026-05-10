@@ -202,13 +202,14 @@ export const useStreamingTranscription = ({
         return;
       }
       
-      const generatedNoteId = wsRef.current.stopRecording(sessionIdRef.current, doctorId);
-      console.log("🆔 Generated note ID:", generatedNoteId);
+      console.log("🔍 About to call stopRecording with noteId:", noteId);
+      const finalNoteId = wsRef.current.stopRecording(sessionIdRef.current, doctorId, noteId);
+      console.log("🆔 Final note ID:", finalNoteId);
       
-      // Store the generated note ID for tracking
+      // Store the final note ID for tracking
       setState(prev => ({
         ...prev,
-        noteId: generatedNoteId
+        noteId: finalNoteId
       }));
     } else {
       console.warn(" No WebSocket connection or session ID available for stopping");
