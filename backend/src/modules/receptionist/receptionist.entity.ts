@@ -3,38 +3,31 @@ import {
   CreateDateColumn,
   Entity,
   Index,
-  JoinColumn,
-  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Doctor } from '../doctor/doctor.entity';
 
 @Entity('receptionists')
 export class Receptionist {
   @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id!: string;
 
   @Column({ type: 'text', name: 'full_name' })
-  fullName: string;
+  fullName!: string;
 
   @Index({ unique: true })
   @Column({ type: 'text' })
-  email: string;
+  email!: string;
 
   @Column({ name: 'password_hash' })
-  passwordHash: string;
-
-  @ManyToOne(() => Doctor, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'doctor_id' })
-  doctor: Doctor;
+  passwordHash!: string;
 
   @Column({ name: 'doctor_id', type: 'uuid' })
-  doctorId: string;
+  doctorId!: string;
 
   @CreateDateColumn({ name: 'created_at' })
-  createdAt: Date;
+  createdAt!: Date;
 
   @UpdateDateColumn({ name: 'updated_at' })
-  updatedAt: Date;
+  updatedAt!: Date;
 }

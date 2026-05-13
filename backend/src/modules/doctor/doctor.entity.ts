@@ -5,14 +5,14 @@ import { ClinicalNote } from 'src/modules/clinical_notes/entity/clinical_notes.e
 @Entity('doctors')
 export class Doctor {
   @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id!: string;
 
   @Column({ length: 255 })
-  fullName: string;
+  fullName!: string;
 
   @Index({ unique: true })
   @Column({ length: 255 })
-  email: string;
+  email!: string;
 
   @Column({ length: 20, nullable: true })
   contactNo?: string;
@@ -21,15 +21,15 @@ export class Doctor {
   specialization?: string;
 
   @Column({ name: 'password_hash' })
-  passwordHash: string;
+  passwordHash!: string;
 
   @CreateDateColumn({ name: 'created_at' })
-  createdAt: Date;
+  createdAt!: Date;
 
   @OneToMany(() => ClinicalNote, (clinicalNote) => clinicalNote.doctor)
-  clinicalNotes: ClinicalNote[];
+  clinicalNotes?: ClinicalNote[];
 
   @OneToMany(() => Patient, (patient) => patient.doctor)
-  patients: Patient[];
+  patients?: Patient[];
 
 }

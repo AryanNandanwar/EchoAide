@@ -9,6 +9,8 @@ import {
   FormControlLabel,
   Box,
   Alert,
+  Tab,
+  Tabs,
 } from "@mui/material";
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
@@ -22,7 +24,10 @@ type Props = {
   onSubmit?: (respData: any) => void; // receives backend response (token/user) if provided
 };
 
+type AccountType = "doctor" | "receptionist";
+
 export default function Login({ onSubmit }: Props) {
+  const [accountType, setAccountType] = useState<AccountType>("doctor");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -47,12 +52,14 @@ export default function Login({ onSubmit }: Props) {
       const resp = await api.post("/api/auth/login", {
         email,
         password,
+        accountType,
       });
 
       // expected: resp.data contains token and user info (adjust as your backend returns)
       const data = resp.data;
+      const user = data?.user ? { ...data.user, role: accountType } : undefined;
 
-      console.log("Login successful:", data.accessToken, data.user);
+      console.log("Login successful:", data.accessToken, user);
 
       // if "remember" store token; otherwise store in sessionStorage
       if (data?.accessToken) {
@@ -64,8 +71,8 @@ export default function Login({ onSubmit }: Props) {
       }
 
       // optionally store user object (non-sensitive)
-      if (data?.user) {
-        const userJson = JSON.stringify(data.user);
+      if (user) {
+        const userJson = JSON.stringify(user);
         if (remember) {
           localStorage.setItem("ds_user", userJson);
         } else {
@@ -74,8 +81,8 @@ export default function Login({ onSubmit }: Props) {
       }
 
       // call parent handler if provided
-      onSubmit?.(data);
-      if (data?.user?.role === "receptionist") {
+      onSubmit?.({ ...data, user });
+      if (accountType === "receptionist") {
         navigate("/receptionist/intake", { replace: true });
       } else {
         navigate("/", { replace: true });
@@ -86,7 +93,7 @@ export default function Login({ onSubmit }: Props) {
       if (err?.response) {
         const { status, data } = err.response;
         if (status === 401) {
-          setError("Invalid email or password.");
+          setError(`Invalid ${accountType} email or password.`);
         } else if (status === 400 && data?.message) {
           setError(data.message);
         } else if (status >= 500) {
@@ -124,9 +131,32 @@ export default function Login({ onSubmit }: Props) {
 
         {/* Form */}
         <h2 className="text-3xl font-bold text-slate-900 mb-2">Welcome back!</h2>
-        <p className="text-sm text-slate-500 mb-6">Log in to access patient notes, transcriptions & analytics.</p>
+        <p className="text-sm text-slate-500 mb-6">
+          Log in as a doctor or receptionist to continue.
+        </p>
 
         <Box component="form" onSubmit={handleSubmit} className="w-full space-y-4">
+          <Tabs
+            value={accountType}
+            onChange={(_, value: AccountType) => {
+              setAccountType(value);
+              setError(null);
+            }}
+            variant="fullWidth"
+            aria-label="Login account type"
+            sx={{
+              minHeight: 40,
+              "& .MuiTab-root": {
+                minHeight: 40,
+                textTransform: "none",
+                fontWeight: 600,
+              },
+            }}
+          >
+            <Tab label="Doctor" value="doctor" />
+            <Tab label="Receptionist" value="receptionist" />
+          </Tabs>
+
           <TextField
             label="Email"
             variant="outlined"
@@ -179,7 +209,7 @@ export default function Login({ onSubmit }: Props) {
             disabled={loading}
             sx={{ textTransform: "none", background: "linear-gradient(90deg,#0ea5a4,#0284c7)" }}
           >
-            {loading ? "Signing in..." : "Log In"}
+            {loading ? "Signing in..." : `Log in as ${accountType === "doctor" ? "Doctor" : "Receptionist"}`}
           </Button>
 
           {/* <div className="flex items-center gap-3">

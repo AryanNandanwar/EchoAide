@@ -2,12 +2,15 @@ import { IsEmail, IsString, MinLength } from 'class-validator';
 
 export class CreateReceptionistDto {
   @IsString()
-  fullName: string;
+  fullName!: string;
 
   @IsEmail()
-  email: string;
+  email!: string;
 
   @IsString()
   @MinLength(6)
-  password: string;
+  password!: string;
+
+  @IsString()
+  doctorId!: string;
 }

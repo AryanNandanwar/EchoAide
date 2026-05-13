@@ -4,7 +4,7 @@ import { PartialType } from '@nestjs/mapped-types';
 
 export class CreatePatientDto {
   @IsString()
-  fullName: string;
+  fullName!: string;
 
   @IsOptional()
   @IsIn(['male', 'female', 'other'])

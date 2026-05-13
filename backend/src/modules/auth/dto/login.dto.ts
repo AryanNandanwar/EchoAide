@@ -1,9 +1,13 @@
-import { IsEmail, IsNotEmpty } from 'class-validator';
+import { IsEmail, IsIn, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class LoginDto {
   @IsEmail()
-  email: string;
+  email!: string;
 
   @IsNotEmpty()
-  password: string;
+  password!: string;
+
+  @IsOptional()
+  @IsIn(['doctor', 'receptionist'])
+  accountType?: 'doctor' | 'receptionist';
 }

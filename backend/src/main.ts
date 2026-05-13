@@ -9,25 +9,6 @@ async function bootstrap() {
   // Optional: enable Helmet but keep CORS config separate
   app.use(helmet());
 
-  // #region agent log
-  fetch('http://127.0.0.1:7885/ingest/231ef9cf-d927-49db-82f0-f19e114f6243', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Debug-Session-Id': '4ef709',
-    },
-    body: JSON.stringify({
-      sessionId: '4ef709',
-      runId: 'initial',
-      hypothesisId: 'H1',
-      location: 'backend/src/main.ts:bootstrap',
-      message: 'NestJS app bootstrap called',
-      data: {},
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion agent log
-
   const frontendOrigin = process.env.FRONTEND_ORIGIN || 'https://app.echoaide.in';
 
   app.enableCors({

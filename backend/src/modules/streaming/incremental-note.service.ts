@@ -1,26 +1,33 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as AWS from 'aws-sdk';
+import {
+  BedrockRuntimeClient,
+  InvokeModelCommand,
+} from '@aws-sdk/client-bedrock-runtime';
 import { sleep } from '../common/utils/sleep';
 import { type ParsedNote } from '../sse/schemas/parsed-note.schema';
 
 @Injectable()
 export class IncrementalNoteService {
   private readonly logger = new Logger(IncrementalNoteService.name);
-  private readonly bedrock: AWS.BedrockRuntime;
+  private readonly bedrock: BedrockRuntimeClient;
   private readonly maxRetries: number;
   private readonly baseDelay: number;
   private readonly maxDelay: number;
 
   constructor() {
-    // Initialize Bedrock client with proper credentials
-    AWS.config.update({ 
-      region: process.env.AWS_REGION || 'ap-south-1',
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      // Ensure proper clock sync for signature validation
-      correctClockSkew: true
+    const region = process.env.AWS_REGION || 'ap-south-1';
+    const explicitCreds =
+      process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
+        ? {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+          }
+        : undefined;
+
+    this.bedrock = new BedrockRuntimeClient({
+      region,
+      ...(explicitCreds ? { credentials: explicitCreds } : {}),
     });
-    this.bedrock = new AWS.BedrockRuntime();
     
     // Initialize rate limiting configuration from environment variables
     this.maxRetries = parseInt(process.env.BEDROCK_MAX_RETRIES || '5');
@@ -124,30 +131,41 @@ Return valid JSON only. Use arrays for every section that can contain multiple i
           }),
         };
 
+        const bodyJson = JSON.stringify(payload);
         const params = {
           modelId: process.env.BEDROCK_MODEL_ID || 'apac.anthropic.claude-3-5-sonnet-20241022-v2:0', // Make model configurable
           contentType: 'application/json',
           accept: 'application/json',
-          body: JSON.stringify(payload),
+          body: new TextEncoder().encode(bodyJson),
         };
 
-        const response = await this.bedrock.invokeModel(params).promise();
-        const responseBody = JSON.parse(response.body.toString());
+        const response = await this.bedrock.send(new InvokeModelCommand(params));
+        const bodyText = response.body
+          ? new TextDecoder('utf-8').decode(response.body)
+          : '{}';
+        const responseBody = JSON.parse(bodyText) as Record<string, unknown>;
         
         
         // Parse response based on model type
         if (process.env.BEDROCK_MODEL_ID?.includes('nova')) {
           // Nova models have different response format
-          return responseBody.results?.[0]?.outputText || responseBody.outputText || '';
+          const results = responseBody['results'] as Array<{ outputText?: string }> | undefined;
+          const outputText = responseBody['outputText'] as string | undefined;
+          return results?.[0]?.outputText || outputText || '';
         } else {
           // Anthropic models
-          return responseBody.content[0].text;
+          const content = responseBody['content'] as Array<{ text?: string }> | undefined;
+          return content?.[0]?.text ?? '';
         }
         
-      } catch (error: any) {
-        lastError = error;
-        
-        if (error.code === 'ThrottlingException' && attempt < this.maxRetries) {
+      } catch (error: unknown) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const errName =
+          error && typeof error === 'object' && 'name' in error
+            ? String((error as { name: string }).name)
+            : '';
+
+        if (errName === 'ThrottlingException' && attempt < this.maxRetries) {
           const delay = Math.min(
             this.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
             this.maxDelay
