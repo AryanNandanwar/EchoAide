@@ -331,7 +331,10 @@ export default function ClinicalNoteViewer({
     setSaving(true);
     try {
       const payload = {
-        patientDetails: noteToSave.patientDetails || {},
+        patientDetails: mergePatientDetails(
+          noteToSave.patientDetails,
+          initialPatientDetails,
+        ),
         medicalHistory: noteToSave.medicalHistory || [],
         problemFaced: noteToSave.problemFaced || "",
         findings: noteToSave.findings || [],
