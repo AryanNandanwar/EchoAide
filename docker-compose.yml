@@ -6,6 +6,7 @@ services:
     container_name: doctorscribe-backend
     env_file:
       - .env
+      - ./backend/.env
     restart: unless-stopped
     expose:
       - "3000"
@@ -16,6 +17,12 @@ services:
       args:
         - VITE_AWS_PRESIGN_S3_URL=${VITE_AWS_PRESIGN_S3_URL}
         - VITE_API_GATEWAY_BASE_URL=${VITE_API_GATEWAY_BASE_URL}
+        # Empty: frontend paths already include /api; nginx proxies /api/ to the backend
+        - VITE_REACT_APP_API_BASE_URL=${VITE_REACT_APP_API_BASE_URL:-}
+        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL:-${SUPABASE_URL}}
+        - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY}}
+        # Leave empty so the app uses window.location.origin (nginx → backend)
+        - VITE_REACT_APP_WEBSOCKET_URL=${VITE_REACT_APP_WEBSOCKET_URL:-}
     container_name: doctorscribe-nginx
     ports:
       - "80:80"

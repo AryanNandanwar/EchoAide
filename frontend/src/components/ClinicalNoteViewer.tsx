@@ -515,7 +515,7 @@ export default function ClinicalNoteViewer({
     return (
       <Card className={className}>
         <CardContent>
-          <Typography color="textSecondary">No clinical note data available</Typography>
+          <Typography color="textSecondary">Your clinical note is being generated...</Typography>
         </CardContent>
       </Card>
     );

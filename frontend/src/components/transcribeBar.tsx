@@ -5,6 +5,7 @@ import StopIcon from "@mui/icons-material/Stop";
 import UploadIcon from "@mui/icons-material/Upload";
 import DownloadIcon from "@mui/icons-material/Download";
 import { useStreamingTranscription } from "../hooks/use-streaming-transcription";
+import { getWebSocketUrl } from "../lib/websocket-url";
 import { useNavigate } from "react-router-dom";
 
 // UUID generation utility
@@ -39,7 +40,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   onSessionStart,
   onSessionEnd,
   onNoteIdGenerated,
-  websocketUrl = 'http://localhost:3000',
+  websocketUrl,
   patientId,
   intakeId,
   variant = "bar",
@@ -54,6 +55,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const autoStartAttemptedRef = useRef(false);
   const navigate = useNavigate();
+  const resolvedWebSocketUrl = websocketUrl ?? getWebSocketUrl();
 
   // Use streaming transcription hook (audio-only)
   const {
@@ -66,7 +68,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     clearError,
     sendAudioChunk
   } = useStreamingTranscription({
-    websocketUrl,
+    websocketUrl: resolvedWebSocketUrl,
     onError: (errorMessage) => {
       onError?.(errorMessage);
     },
@@ -333,7 +335,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     }
 
     try {
-      const response = await fetch(`${websocketUrl}/upload-audio/save-recording`, {
+      const response = await fetch("/api/upload-audio/save-recording", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

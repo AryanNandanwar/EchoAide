@@ -17,9 +17,7 @@ import AudioRecorder from "../components/transcribeBar.tsx";
 import ClinicalNoteViewer from "../components/ClinicalNoteViewer.tsx";
 import api from "../lib/api.ts";
 import { useStreamingTranscription } from "../hooks/use-streaming-transcription.ts";
-
-const WEBSOCKET_URL =
-  import.meta.env.VITE_REACT_APP_API_BASE_URL || "http://localhost:3000";
+import { getWebSocketUrl } from "../lib/websocket-url.ts";
 
 type IntakeCard = {
   id: string;
@@ -98,7 +96,7 @@ export default function HomePage() {
     stopRecording,
     clearError,
   } = useStreamingTranscription({
-    websocketUrl: WEBSOCKET_URL,
+    websocketUrl: getWebSocketUrl(),
     onError: (message) => setIntakeRecordingError(message),
     onSessionStart: (sessionId) => console.log("Intake session started:", sessionId),
     onSessionEnd: () => console.log("Intake session ended"),
@@ -454,6 +452,7 @@ export default function HomePage() {
 
       {userRole !== "receptionist" && !activeIntakeId && !currentNoteId && (
         <AudioRecorder
+          websocketUrl={getWebSocketUrl()}
           isGeneratingNote={isGeneratingNote}
           isNoteReady={isNoteReady}
           onSessionStart={handleSessionStart}

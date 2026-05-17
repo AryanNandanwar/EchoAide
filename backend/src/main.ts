@@ -19,6 +19,7 @@ async function bootstrap() {
         const allowedOrigins = [
           frontendOrigin,
           'http://localhost',      // Nginx Gateway
+          'http://localhost:8081', // Docker local (docker-compose.local.yml)
           'http://localhost:5173', // Local Dev
           'http://127.0.0.1:5173',
           'https://app.echoaide.in', // Production domain
