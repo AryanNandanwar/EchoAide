@@ -88,3 +88,22 @@ test("mergePatientDetails prefers patient card values when provided", () => {
     contact: "9876543210",
   });
 });
+
+test("mergePatientDetails excludes note-extracted identity when receptionist details exist", () => {
+  const merged = mergePatientDetails(
+    {
+      Name: "Supriya",
+      Age: "Not specified",
+      Gender: "Female",
+      name: "From conversation",
+    },
+    { name: "Test Matter", gender: "male", age: "22", contact: "1234567899" },
+  );
+
+  assert.deepEqual(merged, {
+    name: "Test Matter",
+    gender: "male",
+    age: "22",
+    contact: "1234567899",
+  });
+});

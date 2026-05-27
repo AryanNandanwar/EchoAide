@@ -4,6 +4,7 @@ import { IncrementalNoteService } from './incremental-note.service';
 import { ClinicalNotesService } from '../clinical_notes/clinical-notes.service';
 import { CreateClinicalNoteDto } from '../clinical_notes/dto/clinical-note.dto';
 import { IntakeService } from '../intake/intake.service';
+import { mergePatientDetails } from '../clinical_notes/patient-details.util';
 
 export interface StreamingSession {
   clientId: string;
@@ -244,10 +245,10 @@ export class StreamingService {
     cardPatientDetails?: Record<string, string>,
   ): Promise<void> {
     try {
-      const mergedPatientDetails = {
-        ...(finalNote.patientDetails || {}),
-        ...(cardPatientDetails || {}),
-      };
+      const mergedPatientDetails = mergePatientDetails(
+        finalNote.patientDetails,
+        cardPatientDetails,
+      );
 
       // Convert ParsedNote to CreateClinicalNoteDto format
       const createDto: CreateClinicalNoteDto = {
