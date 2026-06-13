@@ -19,7 +19,6 @@ import SearchIcon from "@mui/icons-material/Search";
 import NotesIcon from "@mui/icons-material/Notes";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useNavigate } from "react-router-dom";
-import ResponsiveAppBar from "../components/navbar";
 import { useRequireAuth } from "../hooks/use-require-auth";
 
 type Patient = {
@@ -146,12 +145,7 @@ export default function PatientsPage() {
   }
 
   return (
-    <>
-      {/* Navbar */}
-      <ResponsiveAppBar />
-
-      {/* Page Content (offset because navbar is fixed) */}
-      <div className="pt-20 min-h-screen bg-slate-50 px-8 py-6">
+      <div className="min-h-screen bg-slate-50 px-8 py-6">
         <div className="max-w-7xl mx-auto">
           
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -297,6 +291,5 @@ export default function PatientsPage() {
           )}
         </div>
       </div>
-    </>
   );
 }

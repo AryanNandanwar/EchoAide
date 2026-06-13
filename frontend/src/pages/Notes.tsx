@@ -22,7 +22,6 @@ import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import PrintIcon from "@mui/icons-material/Print";
 import SaveIcon from "@mui/icons-material/Save";
 import CloseIcon from "@mui/icons-material/Close";
-import ResponsiveAppBar from "../components/navbar";
 import { useRequireAuth } from "../hooks/use-require-auth";
 
 type ClinicalNote = {
@@ -305,9 +304,7 @@ export default function NotesPage() {
 
   return (
     <>
-      <ResponsiveAppBar />
-
-      <div className="pt-20 min-h-screen bg-slate-50 px-8 py-6">
+      <div className="min-h-screen bg-slate-50 px-8 py-6">
         <div className="max-w-6xl mx-auto">
           {/* Header Section */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">

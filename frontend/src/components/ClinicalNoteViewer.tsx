@@ -22,6 +22,7 @@ import { type ParsedNote } from "../types/clinical-note";
 import { useClinicalNoteSubscription } from "../hooks/use-clinical-note-subscription";
 import {
   mapClinicalNoteRecordToParsedNote,
+  mapApiClinicalNoteToParsedNote,
   mergePatientDetails,
   parsePatientDetails,
   parseStringContent,
@@ -162,6 +163,7 @@ type Props = {
   noteId?: string; // New prop for Supabase subscription flow
   className?: string;
   initialPatientDetails?: Record<string, string>;
+  loadExisting?: boolean;
   onNoteReady?: () => void;
   onNoteSaved?: () => void;
   onNoteDiscarded?: () => void;
@@ -172,6 +174,7 @@ export default function ClinicalNoteViewer({
   noteId,
   className,
   initialPatientDetails,
+  loadExisting = false,
   onNoteReady,
   onNoteSaved,
   onNoteDiscarded,
@@ -198,10 +201,11 @@ export default function ClinicalNoteViewer({
   const [foundPatient, setFoundPatient] = useState<any>(null);
   const [patientSearchLoading, setPatientSearchLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [loadingExisting, setLoadingExisting] = useState(loadExisting);
 
-  // Supabase subscription for new flow
-  const { fetchNote } = useClinicalNoteSubscription({
-    noteId,
+  // Supabase subscription for newly generated notes
+  useClinicalNoteSubscription({
+    noteId: loadExisting ? undefined : noteId,
     onNoteGenerated: (note) => {
       console.log('📋 Clinical note received from Supabase:', note);
       const parsedNote = mapClinicalNoteRecordToParsedNote(note);
@@ -224,9 +228,49 @@ export default function ClinicalNoteViewer({
   });
 
   useEffect(() => {
+    if (!loadExisting || !noteId) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingExisting(true);
+    setError(null);
+    setParsed(null);
+
+    api.get(`/api/clinical-notes/${noteId}`)
+      .then((response) => {
+        if (cancelled) return;
+
+        const parsedNote = mapApiClinicalNoteToParsedNote(response.data);
+        parsedNote.patientDetails = mergePatientDetails(
+          parsedNote.patientDetails,
+          initialPatientDetails,
+        );
+        setParsed(parsedNote);
+        onNoteReady?.();
+      })
+      .catch((fetchError) => {
+        if (cancelled) return;
+        console.error("Error loading existing clinical note:", fetchError);
+        setError(fetchError?.response?.data?.message || "Failed to load clinical note");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingExisting(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadExisting, noteId, initialPatientDetails, onNoteReady]);
+
+  useEffect(() => {
     // Handle new flow: noteId is handled by subscription hook
-    if (noteId) {
-      console.log('ClinicalNoteViewer: noteId provided, subscription hook will handle fetching:', noteId);
+    if (noteId || loadExisting) {
+      if (noteId && !loadExisting) {
+        console.log('ClinicalNoteViewer: noteId provided, subscription hook will handle fetching:', noteId);
+      }
       return;
     }
 
@@ -260,7 +304,7 @@ export default function ClinicalNoteViewer({
       console.log('ClinicalNoteViewer: No valid source data');
       setParsed(null);
     }
-  }, [source, noteId, fetchNote]);
+  }, [source, noteId, loadExisting]);
 
   // Cleanup effect
   useEffect(() => {
@@ -468,6 +512,7 @@ export default function ClinicalNoteViewer({
         investigationsAdvised: (noteToSave.investigationsAdvised || []).filter(Boolean),
         doctorInstructions: (noteToSave.doctorInstructions || []).filter(Boolean),
         medicationPrescribed: (noteToSave.medicationPrescribed || []).filter(Boolean),
+        status: 'Confirmed' as const,
         ...(patientId && { patientId }) // Add patientId if provided
       };
 
@@ -664,7 +709,11 @@ export default function ClinicalNoteViewer({
     return (
       <Card className={className}>
         <CardContent>
-          <Typography color="textSecondary">Your clinical note is being generated...</Typography>
+          <Typography color="textSecondary">
+            {loadExisting || loadingExisting
+              ? "Loading clinical note..."
+              : "Your clinical note is being generated..."}
+          </Typography>
         </CardContent>
       </Card>
     );

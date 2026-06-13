@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   Res,
@@ -35,10 +36,10 @@ export class ClinicalNotesController {
   }
 
   @Get()
-  async findAll(@Req() req: any) {
+  async findAll(@Req() req: any, @Query('status') status?: string) {
     this.ensureDoctor(req);
     const doctorId = req.user.id;
-    return this.clinicalNotesService.findAllForDoctor(doctorId);
+    return this.clinicalNotesService.findAllForDoctor(doctorId, status);
   }
 
   @Get(':id')

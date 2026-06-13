@@ -140,3 +140,47 @@ export function mapClinicalNoteRecordToParsedNote(note: ClinicalNoteRecord): Par
     medicationPrescribed: parseStringContent(note.medication_prescribed),
   };
 }
+
+export type ApiClinicalNote = {
+  patientDetails?: unknown;
+  medicalHistory?: unknown;
+  problemsFaced?: unknown;
+  findings?: unknown;
+  diagnosis?: unknown;
+  investigationsAdvised?: unknown;
+  doctorInstructions?: unknown;
+  medicationPrescribed?: unknown;
+};
+
+export function mapApiClinicalNoteToParsedNote(note: ApiClinicalNote): ParsedNote {
+  return {
+    patientDetails: parsePatientDetails(note.patientDetails),
+    medicalHistory: parseStringContent(note.medicalHistory),
+    problemFaced: parseStringContent(note.problemsFaced).join(", "),
+    findings: parseStringContent(note.findings),
+    diagnosis: parseStringContent(note.diagnosis),
+    investigationsAdvised: parseStringContent(note.investigationsAdvised),
+    doctorInstructions: parseStringContent(note.doctorInstructions),
+    medicationPrescribed: parseStringContent(note.medicationPrescribed),
+  };
+}
+
+export function getClinicalNotePatientLabel(
+  patientDetails: unknown,
+  linkedPatientName?: string | null,
+): string {
+  if (linkedPatientName?.trim()) {
+    return linkedPatientName.trim();
+  }
+
+  const details = parsePatientDetails(patientDetails);
+  return details.name || details.Name || "Unknown patient";
+}
+
+export function getClinicalNotePreview(problemsFaced: unknown): string {
+  const items = parseStringContent(problemsFaced);
+  if (items.length === 0) {
+    return "Draft note — review and complete patient details";
+  }
+  return items.slice(0, 2).join(", ");
+}

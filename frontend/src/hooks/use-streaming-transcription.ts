@@ -306,7 +306,7 @@ export const useStreamingTranscription = ({
     }
 
     isPausedRef.current = true;
-    if (wsRef.current?.isConnected() && sessionIdRef.current) {
+    if (wsRef.current?.isConnected()) {
       wsRef.current.pauseRecording(sessionIdRef.current);
     }
     setState((prev) => {
@@ -329,7 +329,7 @@ export const useStreamingTranscription = ({
     }
 
     isPausedRef.current = false;
-    if (wsRef.current?.isConnected() && sessionIdRef.current) {
+    if (wsRef.current?.isConnected() ) {
       wsRef.current.resumeRecording(sessionIdRef.current);
     }
     setState((prev) => {

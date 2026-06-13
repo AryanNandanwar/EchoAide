@@ -97,10 +97,18 @@ export class ClinicalNotesService {
     return savedNote;
   }
 
-   async findAllForDoctor(doctorId: string): Promise<ClinicalNote[]> {
+   async findAllForDoctor(doctorId: string, status?: string): Promise<ClinicalNote[]> {
+    const where: { doctor: { id: string }; status?: string } = {
+      doctor: { id: doctorId },
+    };
+    if (status) {
+      where.status = status;
+    }
+
     return this.notesCollection.find({
-      where: { doctor: { id: doctorId } },
+      where,
       relations: ['doctor', 'patient'],
+      order: { createdAt: 'DESC' },
     });
   }
 
@@ -156,8 +164,8 @@ export class ClinicalNotesService {
     if (dto.investigationsAdvised !== undefined) {
       note.investigationsAdvised = JSON.stringify(dto.investigationsAdvised);
     }
-    if(dto.status == 'Draft'){
-      note.status = 'Confirmed';
+    if (dto.status !== undefined) {
+      note.status = dto.status;
     }
 
     // Handle patient assignment

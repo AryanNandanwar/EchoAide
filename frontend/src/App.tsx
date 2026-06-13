@@ -8,21 +8,20 @@ import Login from "./pages/Login";
 import PatientsPage from "./pages/Patients";
 import NotesPage from "./pages/Notes";
 import ReceptionistIntakePage from "./pages/ReceptionistIntake";
+import DoctorLayout from "./layouts/DoctorLayout";
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* default route -> HomePage */}
-        <Route path="/" element={<HomePage />} />
+        <Route element={<DoctorLayout />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/patients" element={<PatientsPage />} />
+          <Route path="/notes" element={<NotesPage />} />
+        </Route>
 
         {/* login & register */}
         <Route path="/login" element={<Login />} />
-        {/* <Route path="/register" element={<Register />} /> */}
-        {/* patients page */}
-        <Route path="/patients" element={<PatientsPage />} />
-        {/* clinical notes page */}
-        <Route path="/notes" element={<NotesPage />} />
         <Route path="/receptionist/intake" element={<ReceptionistIntakePage />} />
 
         {/* example: redirect unknown paths to home */}

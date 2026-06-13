@@ -14,15 +14,16 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import StopIcon from "@mui/icons-material/Stop";
 import PauseIcon from "@mui/icons-material/Pause";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import ResponsiveAppBar from "../components/navbar.tsx";
 import AudioRecorder from "../components/transcribeBar.tsx";
 import ClinicalNoteViewer from "../components/ClinicalNoteViewer.tsx";
+import PendingDraftNotesSection from "../components/PendingDraftNotesSection.tsx";
 import api from "../lib/api.ts";
 import { ensureValidAccessToken, getStoredUser } from "../lib/auth.ts";
 import { useRequireAuth } from "../hooks/use-require-auth.ts";
 import { useStreamingTranscription } from "../hooks/use-streaming-transcription.ts";
 import { getWebSocketUrl } from "../lib/websocket-url.ts";
 import { noteSkipReasonToMessage } from "../utils/recording-status.ts";
+import { usePendingClinicalNote } from "../context/pending-clinical-note-context.tsx";
 
 type IntakeCard = {
   id: string;
@@ -84,11 +85,20 @@ export default function HomePage() {
     requiredRole: "doctor",
     wrongRoleRedirect: "/receptionist/intake",
   });
-  const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
-  const viewerNoteId = currentNoteId ?? devPreviewNoteId;
-  const [isGeneratingNote, setIsGeneratingNote] = useState(false);
-  const [isNoteReady, setIsNoteReady] = useState(false);
+  const {
+    noteId: pendingNoteId,
+    isGenerating: isGeneratingNote,
+    isReady: isNoteReady,
+    beginNote,
+    openDraftNote,
+    markNoteReady,
+    clearPendingNote,
+    abortNoteGeneration,
+    registerOnNoteSaved,
+  } = usePendingClinicalNote();
+  const viewerNoteId = pendingNoteId ?? devPreviewNoteId;
   const [queue, setQueue] = useState<IntakeCard[]>([]);
+  const [draftNotesRefreshToken, setDraftNotesRefreshToken] = useState(0);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [activeIntakeId, setActiveIntakeId] = useState<string | null>(null);
@@ -113,12 +123,10 @@ export default function HomePage() {
   }, []);
 
   const handleNoteGenerationAborted = useCallback((reason: string) => {
-    if (!devPreviewNoteId) setCurrentNoteId(null);
-    setIsGeneratingNote(false);
-    setIsNoteReady(false);
+    if (!devPreviewNoteId) abortNoteGeneration();
     resetIntakeRecording();
     setIntakeRecordingError(noteSkipReasonToMessage(reason));
-  }, [devPreviewNoteId, resetIntakeRecording]);
+  }, [abortNoteGeneration, devPreviewNoteId, resetIntakeRecording]);
 
   const {
     isRecording,
@@ -176,11 +184,16 @@ export default function HomePage() {
     }
   };
 
+  useEffect(() => {
+    return registerOnNoteSaved(() => {
+      void fetchQueue();
+      setDraftNotesRefreshToken((current) => current + 1);
+    });
+  }, [registerOnNoteSaved, fetchQueue]);
+
   const handleNoteIdGenerated = (noteId: string) => {
     console.log("Note ID generated:", noteId);
-    setCurrentNoteId(noteId);
-    setIsGeneratingNote(true);
-    setIsNoteReady(false);
+    beginNote(noteId, activePatientDetails ?? undefined);
   };
 
   const handleSessionStart = (sessionId: string) => {
@@ -193,25 +206,19 @@ export default function HomePage() {
 
   const handleNoteReady = () => {
     console.log("Clinical note ready");
-    setIsNoteReady(true);
-    setIsGeneratingNote(false);
+    markNoteReady();
     resetIntakeRecording();
   };
 
   const handleNoteSaved = () => {
     console.log("Note saved successfully");
-    if (!devPreviewNoteId) setCurrentNoteId(null);
-    setIsNoteReady(false);
-    setIsGeneratingNote(false);
+    if (!devPreviewNoteId) clearPendingNote({ saved: true });
     resetIntakeRecording();
-    fetchQueue();
   };
 
   const handleNoteDiscarded = () => {
     console.log("Note discarded");
-    if (!devPreviewNoteId) setCurrentNoteId(null);
-    setIsNoteReady(false);
-    setIsGeneratingNote(false);
+    if (!devPreviewNoteId) clearPendingNote();
     resetIntakeRecording();
   };
 
@@ -242,9 +249,7 @@ export default function HomePage() {
   const handleCancelRecording = async () => {
     try {
       await cancelRecording();
-      if (!devPreviewNoteId) setCurrentNoteId(null);
-      setIsGeneratingNote(false);
-      setIsNoteReady(false);
+      if (!devPreviewNoteId) clearPendingNote();
       resetIntakeRecording();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to cancel recording";
@@ -255,7 +260,6 @@ export default function HomePage() {
   const handleStopRecording = async () => {
     try {
       const noteId = generateUUID();
-      handleNoteIdGenerated(noteId);
 
       const doctorId = getDoctorId();
       if (!doctorId) {
@@ -267,6 +271,8 @@ export default function HomePage() {
         setIntakeRecordingError("Patient details missing. Please try again.");
         return;
       }
+
+      beginNote(noteId, activePatientDetails);
 
       console.log("Stopping intake recording with data:", {
         noteId,
@@ -316,12 +322,10 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen">
-      <ResponsiveAppBar />
-
-      <main className="pt-20 pb-32 bg-gray-50 min-h-screen flex flex-col">
+    <>
+      <main className="pb-32 min-h-screen flex flex-col">
         <div className="flex-1 w-full">
-          <div className="mb-6 px-4 md:px-8 max-w-3xl mx-auto text-center">
+          <div className="mb-6 px-4 md:px-8 max-w-3xl mx-auto text-center pt-4">
             <h1 className="text-3xl font-bold">Welcome</h1>
             <p className="text-gray-700">
               Record an audio note using the bar below. The clinical note will appear
@@ -335,18 +339,17 @@ export default function HomePage() {
             </Alert>
           )}
 
-          {devPreviewNoteId && !currentNoteId && (
+          {devPreviewNoteId && !pendingNoteId && (
             <Alert severity="info" className="mx-4 md:mx-8 max-w-3xl mb-4">
               Dev preview: Clinical Note Viewer (note {devPreviewNoteId.slice(0, 8)}…)
             </Alert>
           )}
 
-          {viewerNoteId && (
+          {devPreviewNoteId && !pendingNoteId && (
             <div className="px-4 md:px-8 max-w-3xl mx-auto mb-8">
               <ClinicalNoteViewer
-                noteId={viewerNoteId}
+                noteId={devPreviewNoteId}
                 className="w-full"
-                initialPatientDetails={activePatientDetails ?? undefined}
                 onNoteReady={handleNoteReady}
                 onNoteSaved={handleNoteSaved}
                 onNoteDiscarded={handleNoteDiscarded}
@@ -355,6 +358,13 @@ export default function HomePage() {
           )}
 
           {!viewerNoteId && (
+            <>
+              <PendingDraftNotesSection
+                activeNoteId={pendingNoteId}
+                refreshToken={draftNotesRefreshToken}
+                onOpenNote={openDraftNote}
+              />
+
             <section className="px-4 md:px-8 max-w-5xl mx-auto mb-8 w-full">
               <div className="flex items-center justify-between gap-4 mb-3">
                 <Typography variant="h6" className="font-semibold text-slate-800">
@@ -542,6 +552,7 @@ export default function HomePage() {
                 </div>
               )}
             </section>
+            </>
           )}
 
         </div>
@@ -559,6 +570,6 @@ export default function HomePage() {
           onNoteGenerationFailed={({ reason }) => handleNoteGenerationAborted(reason)}
         />
       )}
-    </div>
+    </>
   );
 }
