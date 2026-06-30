@@ -4,7 +4,7 @@ import {
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import { sleep } from '../common/utils/sleep';
-import { type ParsedNote } from '../sse/schemas/parsed-note.schema';
+import { type ParsedNote } from './schemas/parsed-note.schema';
 
 @Injectable()
 export class IncrementalNoteService {

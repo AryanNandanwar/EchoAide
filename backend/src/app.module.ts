@@ -8,7 +8,6 @@ import { ConfigModule } from '@nestjs/config';
 import { ClinicalNotesModule } from './modules/clinical_notes/clinical-notes.module';
 import { PatientModule } from './modules/patient/patient.module';
 import { WebSocketModule } from './modules/websocket/websocket.module';
-import { SseModule } from './modules/sse/sse.module';
 import { IntakeModule } from './modules/intake/intake.module';
 
 @Module({
@@ -21,7 +20,6 @@ import { IntakeModule } from './modules/intake/intake.module';
     PatientModule,      // <<< Patient Module
     IntakeModule,
     WebSocketModule,    // <<< WebSocket Module for streaming
-    SseModule,          // <<< SSE Module for final note notifications
   ],
 })
 export class AppModule {}

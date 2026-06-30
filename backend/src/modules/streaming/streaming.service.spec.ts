@@ -1,5 +1,6 @@
 import {
   getNoteSkipReasonForTranscript,
+  isNoteUnusable,
   isTranscriptTooShortForNote,
 } from './streaming.service';
 
@@ -17,5 +18,35 @@ describe('streaming transcript validation', () => {
 
   it('allows meaningful transcripts through', () => {
     expect(isTranscriptTooShortForNote('patient has fever and cough')).toBe(false);
+  });
+
+  it('treats all-Not-mentioned AI notes as unusable', () => {
+    expect(
+      isNoteUnusable({
+        patientDetails: {},
+        medicalHistory: ['Not mentioned'],
+        problemFaced: 'Not mentioned',
+        findings: ['Not mentioned'],
+        diagnosis: ['Not mentioned'],
+        investigationsAdvised: ['Not mentioned'],
+        doctorInstructions: ['Not mentioned'],
+        medicationPrescribed: ['Not mentioned'],
+      }),
+    ).toBe(true);
+  });
+
+  it('accepts AI notes with at least one meaningful section', () => {
+    expect(
+      isNoteUnusable({
+        patientDetails: {},
+        medicalHistory: ['Not mentioned'],
+        problemFaced: 'Pregnancy at 20 weeks',
+        findings: ['Not mentioned'],
+        diagnosis: ['Not mentioned'],
+        investigationsAdvised: ['Not mentioned'],
+        doctorInstructions: ['Not mentioned'],
+        medicationPrescribed: ['Not mentioned'],
+      }),
+    ).toBe(false);
   });
 });

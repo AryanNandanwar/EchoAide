@@ -14,7 +14,7 @@ export function useClinicalNoteSubscription({
   onError,
 }: UseClinicalNoteSubscriptionProps) {
   const unsubscribeRef = useRef<(() => void) | null>(null);
-  const timeoutRef = useRef<number | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
   const maxRetries = 3;
   const noteReceivedRef = useRef(false);

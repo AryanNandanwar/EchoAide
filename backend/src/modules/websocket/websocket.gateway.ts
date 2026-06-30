@@ -11,7 +11,7 @@ import {
 import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { StreamingService } from '../streaming/streaming.service';
-import { type ParsedNote } from '../sse/schemas/parsed-note.schema';
+import { type ParsedNote } from '../streaming/schemas/parsed-note.schema';
 
 @WebSocketGateway({
   cors: {

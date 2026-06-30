@@ -7,7 +7,7 @@ Production: [https://app.echoaide.in](https://app.echoaide.in)
 ## Features
 
 - **Live transcription** — Record consultations in the browser; audio streams over WebSocket to Soniox for real-time speech-to-text.
-- **Structured clinical notes** — A multi-agent LangGraph pipeline (AWS Bedrock) turns transcripts into formatted notes with history, findings, investigations, and medications.
+- **Structured clinical notes** — AWS Bedrock turns transcripts into formatted notes with history, findings, investigations, and medications.
 - **Patient intake queue** — Receptionists register patients; doctors see pending intakes on the home page and start recording from there.
 - **Patient & note management** — Browse patients, view past notes, and track pending documentation.
 - **Role-based access** — Separate flows for doctors and receptionists with JWT authentication.
@@ -22,7 +22,7 @@ Browser (React SPA)
   └─ WebSocket /socket.io ─────► StreamingService
                                    │
                                    ├─ Soniox (live STT)
-                                   └─ AI service (FastAPI + LangGraph) ──► AWS Bedrock
+                                   └─ AWS Bedrock (clinical note generation)
                                         │
                                         └─ SSE push when note is ready
 ```
@@ -30,9 +30,8 @@ Browser (React SPA)
 | Service | Stack | Role |
 |---------|-------|------|
 | `frontend/` | React 19, Vite, MUI, Tailwind | SPA served by nginx in production |
-| `backend/` | NestJS 11, TypeORM, Socket.IO | REST API, WebSocket streaming, auth, persistence |
-| `ai-service/` | FastAPI, LangGraph, LangChain AWS | Clinical note generation via Bedrock |
-| `docker-compose.yml` | Docker | Production stack: backend + ai-service + nginx + certbot |
+| `backend/` | NestJS 11, TypeORM, Socket.IO | REST API, WebSocket streaming, auth, persistence, Bedrock note generation |
+| `docker-compose.yml` | Docker | Production stack: backend + nginx + certbot |
 
 All REST routes use the `/api` prefix. WebSocket traffic is at `/socket.io` (excluded from the prefix).
 
@@ -53,7 +52,6 @@ Copy the example files and fill in secrets. Never commit real credentials.
 | `.env` | Shared Docker / root config |
 | `backend/.env` | Database, Soniox, AWS Bedrock, JWT |
 | `frontend/.env` | Vite build-time API and WebSocket URLs |
-| `ai-service/.env` | Bedrock model settings for the note pipeline |
 
 **Backend (required):**
 
@@ -70,7 +68,7 @@ Copy the example files and fill in secrets. Never commit real credentials.
 - `VITE_REACT_APP_WEBSOCKET_URL` — leave empty in Docker (same-origin via nginx)
 - `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` — Supabase client
 
-See `backend/.env.example`, `frontend/.env.example`, and `ai-service/.env.example` for the full list.
+See `backend/.env.example` and `frontend/.env.example` for the full list.
 
 ## Running locally
 
@@ -84,11 +82,9 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 
 Open **http://localhost:8081**
 
-The AI service is also exposed on **http://localhost:8001** for direct API testing.
-
 ### Split dev servers
 
-Run backend, frontend, and optionally the AI service separately:
+Run backend and frontend separately:
 
 ```bash
 # Terminal 1 — backend (port 3000)
@@ -96,9 +92,6 @@ cd backend && npm install && npm run start:dev
 
 # Terminal 2 — frontend (port 5173)
 cd frontend && npm install && npm run dev
-
-# Terminal 3 — AI service (port 8000, optional if backend calls Bedrock directly)
-cd ai-service && pip install -r requirements.txt && uvicorn app.main:app --reload
 ```
 
 Set `VITE_REACT_APP_API_BASE_URL=http://localhost:3000` in `frontend/.env` for split dev.
@@ -119,9 +112,8 @@ cd frontend && npm run test:audio-pipeline
 
 ```
 .
-├── backend/          NestJS API, WebSocket gateway, streaming, auth
+├── backend/          NestJS API, WebSocket gateway, streaming, auth, Bedrock note generation
 ├── frontend/         React SPA, nginx configs for local and production
-├── ai-service/       FastAPI + LangGraph clinical note pipeline
 ├── docker-compose.yml
 ├── docker-compose.local.yml
 └── certbot/          TLS certificates (production only)
@@ -144,18 +136,12 @@ cd frontend && npm run test:audio-pipeline
 - **doctor** / **patient** — profiles and patient lists
 - **clinical_notes** — note CRUD
 - **intake** — receptionist queue
-- **websocket** + **streaming** — live recording, Soniox STT, note orchestration
+- **websocket** + **streaming** — live recording, Soniox STT, Bedrock note generation
 - **sse** — server-sent events when a final note is ready
 
-### AI note pipeline
+### Clinical note generation
 
-The `ai-service` uses a LangGraph workflow:
-
-```
-cleaner → (4 parallel extractors) → aggregator → critic ⇄ reviser → formatter
-```
-
-Extractors cover history/problem, findings/diagnosis, investigations/instructions, and medication. The critic–reviser loop runs up to `MAX_REVISIONS` times before the note is formatted and returned.
+When a recording stops, `StreamingService` sends the final transcript to `IncrementalNoteService`, which calls AWS Bedrock and returns an 8-section structured note (patient details, history, problem, findings, diagnosis, investigations, instructions, medications).
 
 ## Production deployment
 

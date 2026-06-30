@@ -8,7 +8,7 @@ import { Patient } from '../../src/modules/patient/entities/patient.entity';
 import { DatabaseTestHelper } from '../utils/database-test.helper';
 import { MockDataGenerator } from '../utils/mock-data.generator';
 import { CreateClinicalNoteDto } from '../../src/modules/clinical_notes/dto/clinical-note.dto';
-import { type ParsedNote } from '../../src/modules/sse/schemas/parsed-note.schema';
+import { type ParsedNote } from '../../src/modules/streaming/schemas/parsed-note.schema';
 
 // Helper function to create simple test DTO
 function createTestDto(overrides?: Partial<CreateClinicalNoteDto>): CreateClinicalNoteDto {

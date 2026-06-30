@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SonioxClientService } from './soniox-client.service';
 import { IncrementalNoteService } from './incremental-note.service';
+import { type ParsedNote } from './schemas/parsed-note.schema';
 import { ClinicalNotesService } from '../clinical_notes/clinical-notes.service';
 import { CreateClinicalNoteDto } from '../clinical_notes/dto/clinical-note.dto';
 import { IntakeService } from '../intake/intake.service';
@@ -164,7 +165,7 @@ export class StreamingService {
     }
 
     try {
-      const finalNote = await this.incrementalNoteService.generateFinalNote(finalTranscript);
+      const finalNote = await this.generateFinalNote(finalTranscript);
 
       this.logger.log(`Storing clinical note in backend for session ${sessionId} with noteId: ${noteId}`);
       await this.storeClinicalNote(finalNote, doctorId, noteId, patientId, patientDetails);
@@ -367,6 +368,11 @@ export class StreamingService {
   findClientIdBySessionId(sessionId: string): string | null {
     const session = this.sessions.get(sessionId);
     return session?.clientId || null;
+  }
+
+  /** Generate the clinical note via in-process AWS Bedrock. */
+  private async generateFinalNote(transcript: string): Promise<ParsedNote> {
+    return this.incrementalNoteService.generateFinalNote(transcript);
   }
 
   private async storeClinicalNote(
