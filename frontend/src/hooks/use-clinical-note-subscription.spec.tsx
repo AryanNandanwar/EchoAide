@@ -23,7 +23,7 @@ describe('useClinicalNoteSubscription', () => {
     fetchClinicalNote.mockReset();
     fetchExistingClinicalNote.mockReset();
 
-    subscribeToClinicalNote.mockImplementation(({ onNoteGenerated }) => {
+    subscribeToClinicalNote.mockImplementation(() => {
       return () => undefined;
     });
     fetchExistingClinicalNote.mockResolvedValue(null);

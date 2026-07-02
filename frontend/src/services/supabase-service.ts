@@ -25,12 +25,15 @@ function mapApiClinicalNoteToRecord(note: Record<string, unknown>) {
 }
 
 export class SupabaseService {
+  private readonly client: SupabaseClient;
   private subscriptions: Map<string, RealtimeChannel> = new Map();
   private activeFetches: Map<string, Promise<any>> = new Map();
   private subscriptionStates: Map<string, 'SUBSCRIBING' | 'SUBSCRIBED' | 'ERROR'> = new Map();
   private apiPollers: Map<string, { cancelled: boolean }> = new Map();
 
-  constructor(private readonly client: SupabaseClient = supabase) {}
+  constructor(client: SupabaseClient = supabase) {
+    this.client = client;
+  }
 
   
   subscribeToClinicalNote(subscription: ClinicalNoteSubscription): () => void {

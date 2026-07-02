@@ -4,8 +4,10 @@ const frontendPort = process.env.E2E_FRONTEND_PORT ?? '5173';
 const backendPort = process.env.E2E_BACKEND_PORT ?? '3099';
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${frontendPort}`;
 
-const chromiumExecutable =
-  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? '/usr/bin/chromium-browser';
+// When unset (e.g. in CI), Playwright's bundled Chromium is used.
+// On WSL/Linux desktops without the bundled browser, set
+// PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: './tests',
@@ -25,7 +27,7 @@ export default defineConfig({
     video: 'retain-on-failure',
     permissions: ['microphone'],
     launchOptions: {
-      executablePath: chromiumExecutable,
+      ...(chromiumExecutable ? { executablePath: chromiumExecutable } : {}),
       args: [
         '--use-fake-device-for-media-stream',
         '--use-fake-ui-for-media-stream',

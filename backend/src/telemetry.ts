@@ -1,4 +1,5 @@
 // OpenTelemetry bootstrap for EchoAide API (NestJS). Loaded before Nest in main.ts.
+import { Logger } from '@nestjs/common';
 import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api';
 import { logs } from '@opentelemetry/api-logs';
 import { metrics } from '@opentelemetry/api';
@@ -14,6 +15,7 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
 } from '@opentelemetry/semantic-conventions';
+import { OtelBridgedLogger } from './otel-logger';
 
 const SUPERLOG_ENDPOINT = 'https://intake.superlog.sh';
 const SUPERLOG_PUBLIC_TOKEN = 'sl_public_7nCTZwj2Oiu8IE831wlOOdM_3CdqeApDlfXl7OGGpk8';
@@ -97,6 +99,7 @@ export function initTelemetry(): void {
 
   sdk.start();
   metrics.getMeter('echoaide.api');
+  Logger.overrideLogger(new OtelBridgedLogger());
 
   const shutdown = async () => {
     try {

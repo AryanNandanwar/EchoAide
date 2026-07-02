@@ -1,6 +1,8 @@
 // Browser OpenTelemetry for EchoAide (Vite SPA). First import in main.tsx.
 import { trace, metrics } from '@opentelemetry/api';
+import { logs } from '@opentelemetry/api-logs';
 import { ZoneContextManager } from '@opentelemetry/context-zone';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';
@@ -10,6 +12,7 @@ import { UserInteractionInstrumentation } from '@opentelemetry/instrumentation-u
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { MeterProvider } from '@opentelemetry/sdk-metrics';
+import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs';
 import { BatchSpanProcessor, WebTracerProvider } from '@opentelemetry/sdk-trace-web';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 
@@ -59,6 +62,16 @@ try {
     ],
   });
   metrics.setGlobalMeterProvider(meterProvider);
+
+  const logExporter = new OTLPLogExporter({
+    url: `${base}/v1/logs`,
+    headers,
+  });
+  const loggerProvider = new LoggerProvider({
+    resource,
+    processors: [new BatchLogRecordProcessor(logExporter)],
+  });
+  logs.setGlobalLoggerProvider(loggerProvider);
 
   registerInstrumentations({
     instrumentations: [

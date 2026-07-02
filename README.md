@@ -153,6 +153,37 @@ docker compose up --build -d
 
 The frontend is built into the nginx image with Vite env args from `.env`. nginx proxies `/api/` and `/socket.io` to the backend.
 
+## CI/CD
+
+GitHub Actions workflows live in `.github/workflows/`. See [TESTING.md](TESTING.md) for details on every test layer that CI runs.
+
+### CI — `ci.yml`
+
+Runs on pull requests and pushes to `main`:
+
+| Job | What it runs |
+|-----|--------------|
+| `backend` | ESLint, `nest build`, Jest unit + API + integration + WebSocket suites (Node 20) |
+| `frontend` | ESLint, `vite build`, Vitest, Node test runner suites (Node 22) |
+| `e2e` | Playwright browser journeys against the E2E backend and Vite dev server (needs `backend` + `frontend`) |
+| `smoke` | `scripts/smoke/run-all.sh` — nginx configs, CORS/Helmet, migrations, Docker compose stack (needs `backend`) |
+
+Optional repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are passed to the frontend build (placeholders otherwise).
+
+### CD — `deploy.yml`
+
+Deploys on push to `main` (or manually via *Run workflow*). It SSHes into the production server, resets the checkout to `origin/main`, and re-runs `docker compose up --build -d`. App secrets (`.env`, `backend/.env`) live on the server and are never handled by the workflow.
+
+Required repository secrets:
+
+| Secret | Purpose |
+|--------|---------|
+| `SSH_HOST` | Production server hostname or IP |
+| `SSH_USER` | SSH user |
+| `SSH_KEY` | Private key for the SSH user |
+| `SSH_PORT` | SSH port (optional, defaults to 22) |
+| `DEPLOY_PATH` | Absolute path to the repo checkout on the server |
+
 ## Development notes
 
 - Auth tokens are stored in `localStorage` or `sessionStorage` as `ds_token` and `ds_user`.

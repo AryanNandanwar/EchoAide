@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 const e2eBackendPort = process.env.E2E_BACKEND_PORT ?? '3099'
