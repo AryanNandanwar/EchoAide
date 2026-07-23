@@ -14,10 +14,12 @@ import {
 } from "@mui/material";
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
+import { withSpan } from "@superlog/otel-helpers";
 import api from "../lib/api";
 import { saveAuthSession } from "../lib/auth";
 import { useNavigate } from "react-router-dom";
 import EchoAideLogo from "../components/EchoAideLogo";
+import { authLoginAttempts, tracer } from "../observability";
 
 // EchoAide Fullscreen Login Page (React + TypeScript + Tailwind + MUI)
 // Updated to call backend, show server errors & support "remember me".
@@ -50,39 +52,54 @@ export default function Login({ onSubmit }: Props) {
 
     setLoading(true);
     try {
-      // call your backend login endpoint - change path if your API differs
-      const resp = await api.post("/api/auth/login", {
-        email,
-        password,
-        accountType,
-      });
+      await withSpan(
+        "auth.login",
+        async (span) => {
+          span.setAttributes({ "auth.role": accountType });
+          try {
+            const resp = await api.post("/api/auth/login", {
+              email,
+              password,
+              accountType,
+            });
 
-      // expected: resp.data contains token and user info (adjust as your backend returns)
-      const data = resp.data;
-      const user = data?.user ? { ...data.user, role: accountType } : undefined;
+            const data = resp.data;
+            const user = data?.user ? { ...data.user, role: accountType } : undefined;
 
-      if (data?.accessToken && data?.refreshToken && user) {
-        saveAuthSession({
-          accessToken: data.accessToken,
-          refreshToken: data.refreshToken,
-          user,
-          remember,
-        });
-      } else if (data?.accessToken) {
-        setError("Login succeeded but session tokens were missing. Please try again.");
-        return;
-      }
+            if (data?.accessToken && data?.refreshToken && user) {
+              saveAuthSession({
+                accessToken: data.accessToken,
+                refreshToken: data.refreshToken,
+                user,
+                remember,
+              });
+            } else if (data?.accessToken) {
+              authLoginAttempts.add(1, { outcome: "error", "auth.role": accountType });
+              span.setAttributes({ outcome: "error", "error.type": "incomplete_session" });
+              setError("Login succeeded but session tokens were missing. Please try again.");
+              return;
+            }
 
-      // call parent handler if provided
-      onSubmit?.({ ...data, user });
-      if (accountType === "receptionist") {
-        navigate("/receptionist/intake", { replace: true });
-      } else {
-        navigate("/", { replace: true });
-      }
-
+            authLoginAttempts.add(1, { outcome: "success", "auth.role": accountType });
+            span.setAttributes({ outcome: "success" });
+            onSubmit?.({ ...data, user });
+            if (accountType === "receptionist") {
+              navigate("/receptionist/intake", { replace: true });
+            } else {
+              navigate("/", { replace: true });
+            }
+          } catch (err: any) {
+            authLoginAttempts.add(1, { outcome: "error", "auth.role": accountType });
+            span.setAttributes({
+              outcome: "error",
+              "error.type": err?.response?.status === 401 ? "invalid_credentials" : "login_failed",
+            });
+            throw err;
+          }
+        },
+        { tracer },
+      );
     } catch (err: any) {
-      // axios-style error handling
       if (err?.response) {
         const { status, data } = err.response;
         if (status === 401) {

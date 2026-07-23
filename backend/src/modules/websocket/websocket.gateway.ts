@@ -262,8 +262,15 @@ export class StreamingWebSocketGateway implements OnGatewayInit, OnGatewayConnec
         firstBytes: Array.from(audioBuffer.subarray(0, 10))
       });
       
-      // Forward to streaming service for Sarvam processing
-      await this.streamingService.processAudioChunk(client.id, audioBuffer.buffer, data.timestamp);
+      // Slice the exact byte range: Buffer.from() may return a view into Node's
+      // shared buffer pool, so audioBuffer.buffer can contain unrelated bytes.
+      const audioBytes = audioBuffer.buffer.slice(
+        audioBuffer.byteOffset,
+        audioBuffer.byteOffset + audioBuffer.byteLength,
+      );
+
+      // Forward to streaming service for transcription processing
+      await this.streamingService.processAudioChunk(client.id, audioBytes, data.timestamp);
       
     } catch (error) {
       console.error(`❌ Gateway: Failed to process audio chunk:`, error);

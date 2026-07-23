@@ -135,13 +135,14 @@ export function useClinicalNoteSubscription({
         });
       }
       
-      // Set 15-second timeout only if not already set and note hasn't been received
+      // Set generation timeout only if not already set and note hasn't been received.
+      // 30s covers transcription flush (uploaded audio) plus LLM note generation.
       if (!timeoutRef.current && !noteReceivedRef.current) {
         timeoutRef.current = setTimeout(() => {
-          console.log(`⏰ Timeout: Note ${noteId} not found after 15 seconds`);
+          console.log(`⏰ Timeout: Note ${noteId} not found after 30 seconds`);
           unsubscribe(); // Stop listening
           onError?.(new Error('NOTE_NOT_CREATED'));
-        }, 15000);
+        }, 30000);
       }
     }
 

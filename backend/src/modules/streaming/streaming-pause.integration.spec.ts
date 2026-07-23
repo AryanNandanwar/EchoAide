@@ -55,6 +55,10 @@ class MockSonioxClientService {
     return;
   }
 
+  async finalizeSession(_sessionId: string): Promise<void> {
+    return;
+  }
+
   async stopSession(sessionId: string): Promise<void> {
     this.sessions.delete(sessionId);
   }

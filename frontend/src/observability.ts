@@ -17,7 +17,7 @@ import { BatchSpanProcessor, WebTracerProvider } from '@opentelemetry/sdk-trace-
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 
 const SUPERLOG_ENDPOINT = 'https://intake.superlog.sh';
-const SUPERLOG_PUBLIC_TOKEN = 'sl_public_7nCTZwj2Oiu8IE831wlOOdM_3CdqeApDlfXl7OGGpk8';
+const SUPERLOG_PUBLIC_TOKEN = 'sl_public_5wO0lS5AYaiq0Ocdew2WbkCdax0dv19rGKfs9XlZMG8';
 const REPO_URL = 'https://github.com/AryanNandanwar/DoctorScribe-prod';
 
 function superlogHeaders(token: string): Record<string, string> {
@@ -92,3 +92,7 @@ try {
 
 export const tracer = trace.getTracer('echoaide.web');
 export const meter = metrics.getMeter('echoaide.web');
+
+export const recordingSessionStarted = meter.createCounter('recording.session.started');
+export const recordingSessionStopped = meter.createCounter('recording.session.stopped');
+export const authLoginAttempts = meter.createCounter('auth.login.attempts');

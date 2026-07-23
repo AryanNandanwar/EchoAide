@@ -66,7 +66,7 @@ describe('useClinicalNoteSubscription', () => {
     });
   });
 
-  it('fires NOTE_NOT_CREATED after the 15s timeout', async () => {
+  it('fires NOTE_NOT_CREATED after the generation timeout', async () => {
     vi.useFakeTimers();
     const onError = vi.fn();
 
@@ -78,7 +78,7 @@ describe('useClinicalNoteSubscription', () => {
     );
 
     await act(async () => {
-      vi.advanceTimersByTime(15_000);
+      vi.advanceTimersByTime(30_000);
     });
 
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'NOTE_NOT_CREATED' }));

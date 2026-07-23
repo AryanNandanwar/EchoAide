@@ -6,7 +6,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import { sleep } from '../common/utils/sleep';
 import { type ParsedNote } from './schemas/parsed-note.schema';
-import { clinicalNoteGenerated, tracer } from '../../otel-instruments';
+import { clinicalNoteGenerated, tracer, withSpan } from '../../otel-instruments';
 
 @Injectable()
 export class IncrementalNoteService {
@@ -39,38 +39,40 @@ export class IncrementalNoteService {
 
 
   async generateFinalNote(fullTranscript: string): Promise<ParsedNote> {
-    return tracer.startActiveSpan('clinical_note.generate', async (span) => {
-      span.setAttributes({ 'transcript.length': fullTranscript?.trim().length ?? 0 });
+    return withSpan(
+      'clinical_note.generate',
+      async (span) => {
+        span.setAttributes({ 'transcript.length': fullTranscript?.trim().length ?? 0 });
 
-      try {
-        if (!fullTranscript || fullTranscript.trim().length === 0) {
-          this.logger.warn('Empty transcript provided for final note generation');
-          span.setAttributes({ outcome: 'skipped', 'skip.reason': 'empty_transcript' });
+        try {
+          if (!fullTranscript || fullTranscript.trim().length === 0) {
+            this.logger.warn('Empty transcript provided for final note generation');
+            span.setAttributes({ outcome: 'skipped', 'skip.reason': 'empty_transcript' });
+            return this.getDefaultNoteStructure();
+          }
+
+          if (fullTranscript.trim().length < 10) {
+            this.logger.warn('Transcript too short for meaningful note generation');
+            span.setAttributes({ outcome: 'skipped', 'skip.reason': 'transcript_too_short' });
+            return this.getDefaultNoteStructure();
+          }
+
+          const prompt = this.buildFinalPrompt(fullTranscript);
+          const response = await this.callBedrock(prompt);
+          const note = this.parseFinalResponse(response);
+          clinicalNoteGenerated.add(1, { outcome: 'success' });
+          span.setAttributes({ outcome: 'success' });
+          return note;
+        } catch (error) {
+          this.logger.error('Failed to generate final note:', error);
+          clinicalNoteGenerated.add(1, { outcome: 'error' });
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          span.setAttributes({ outcome: 'error', 'error.type': 'generation_failed' });
           return this.getDefaultNoteStructure();
         }
-
-        if (fullTranscript.trim().length < 10) {
-          this.logger.warn('Transcript too short for meaningful note generation');
-          span.setAttributes({ outcome: 'skipped', 'skip.reason': 'transcript_too_short' });
-          return this.getDefaultNoteStructure();
-        }
-
-        const prompt = this.buildFinalPrompt(fullTranscript);
-        const response = await this.callBedrock(prompt);
-        const note = this.parseFinalResponse(response);
-        clinicalNoteGenerated.add(1, { outcome: 'success' });
-        span.setAttributes({ outcome: 'success' });
-        return note;
-      } catch (error) {
-        this.logger.error('Failed to generate final note:', error);
-        clinicalNoteGenerated.add(1, { outcome: 'error' });
-        span.setStatus({ code: SpanStatusCode.ERROR });
-        span.setAttributes({ outcome: 'error', 'error.type': 'generation_failed' });
-        return this.getDefaultNoteStructure();
-      } finally {
-        span.end();
-      }
-    });
+      },
+      { tracer },
+    );
   }
 
 
@@ -119,107 +121,109 @@ Return valid JSON only. Use arrays for every section that can contain multiple i
     const modelId =
       process.env.BEDROCK_MODEL_ID || 'apac.anthropic.claude-3-5-sonnet-20241022-v2:0';
 
-    return tracer.startActiveSpan('llm.generate_content', async (span) => {
-      span.setAttributes({
-        'gen_ai.provider.name': 'aws.bedrock',
-        'gen_ai.request.model': modelId,
-        'app.gen_ai.use_case': 'clinical_note.from_transcript',
-        'app.gen_ai.call_site': 'IncrementalNoteService.callBedrock',
-      });
+    return withSpan(
+      'llm.generate_content',
+      async (span) => {
+        span.setAttributes({
+          'gen_ai.provider.name': 'aws.bedrock',
+          'gen_ai.request.model': modelId,
+          'app.gen_ai.use_case': 'clinical_note.from_transcript',
+          'app.gen_ai.call_site': 'IncrementalNoteService.callBedrock',
+        });
 
-      let lastError: Error | undefined;
+        let lastError: Error | undefined;
 
-      try {
-        for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-          try {
-            const payload = {
-              ...(modelId.includes('nova')
-                ? {
-                    inferenceConfig: {
-                      maxNewTokens: 2048,
-                      temperature: 0.3,
-                    },
-                    input: {
-                      inputText: prompt,
-                    },
-                  }
-                : {
-                    anthropic_version: 'bedrock-2023-05-31',
-                    max_tokens: 2048,
-                    temperature: 0.3,
-                    messages: [
-                      {
-                        role: 'user',
-                        content: prompt,
+        try {
+          for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+            try {
+              const payload = {
+                ...(modelId.includes('nova')
+                  ? {
+                      inferenceConfig: {
+                        maxNewTokens: 2048,
+                        temperature: 0.3,
                       },
-                    ],
-                  }),
-            };
+                      input: {
+                        inputText: prompt,
+                      },
+                    }
+                  : {
+                      anthropic_version: 'bedrock-2023-05-31',
+                      max_tokens: 2048,
+                      temperature: 0.3,
+                      messages: [
+                        {
+                          role: 'user',
+                          content: prompt,
+                        },
+                      ],
+                    }),
+              };
 
-            const bodyJson = JSON.stringify(payload);
-            const params = {
-              modelId,
-              contentType: 'application/json',
-              accept: 'application/json',
-              body: new TextEncoder().encode(bodyJson),
-            };
+              const bodyJson = JSON.stringify(payload);
+              const params = {
+                modelId,
+                contentType: 'application/json',
+                accept: 'application/json',
+                body: new TextEncoder().encode(bodyJson),
+              };
 
-            const response = await this.bedrock.send(new InvokeModelCommand(params));
-            const bodyText = response.body
-              ? new TextDecoder('utf-8').decode(response.body)
-              : '{}';
-            const responseBody = JSON.parse(bodyText) as Record<string, unknown>;
+              const response = await this.bedrock.send(new InvokeModelCommand(params));
+              const bodyText = response.body
+                ? new TextDecoder('utf-8').decode(response.body)
+                : '{}';
+              const responseBody = JSON.parse(bodyText) as Record<string, unknown>;
 
-            if (modelId.includes('nova')) {
-              const results = responseBody['results'] as
-                | Array<{ outputText?: string }>
-                | undefined;
-              const outputText = responseBody['outputText'] as string | undefined;
+              if (modelId.includes('nova')) {
+                const results = responseBody['results'] as
+                  | Array<{ outputText?: string }>
+                  | undefined;
+                const outputText = responseBody['outputText'] as string | undefined;
+                span.setAttributes({ outcome: 'success' });
+                return results?.[0]?.outputText || outputText || '';
+              }
+
+              const content = responseBody['content'] as Array<{ text?: string }> | undefined;
               span.setAttributes({ outcome: 'success' });
-              return results?.[0]?.outputText || outputText || '';
-            }
+              return content?.[0]?.text ?? '';
+            } catch (error: unknown) {
+              lastError = error instanceof Error ? error : new Error(String(error));
+              const errName =
+                error && typeof error === 'object' && 'name' in error
+                  ? String((error as { name: string }).name)
+                  : '';
 
-            const content = responseBody['content'] as Array<{ text?: string }> | undefined;
-            span.setAttributes({ outcome: 'success' });
-            return content?.[0]?.text ?? '';
-          } catch (error: unknown) {
-            lastError = error instanceof Error ? error : new Error(String(error));
-            const errName =
-              error && typeof error === 'object' && 'name' in error
-                ? String((error as { name: string }).name)
-                : '';
+              if (errName === 'ThrottlingException' && attempt < this.maxRetries) {
+                const delay = Math.min(
+                  this.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
+                  this.maxDelay,
+                );
 
-            if (errName === 'ThrottlingException' && attempt < this.maxRetries) {
-              const delay = Math.min(
-                this.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
-                this.maxDelay,
-              );
+                this.logger.warn(
+                  `AWS Bedrock throttled (attempt ${attempt + 1}/${this.maxRetries + 1}). ` +
+                    `Retrying in ${Math.round(delay)}ms...`,
+                );
 
-              this.logger.warn(
-                `AWS Bedrock throttled (attempt ${attempt + 1}/${this.maxRetries + 1}). ` +
-                  `Retrying in ${Math.round(delay)}ms...`,
-              );
-
-              await sleep(delay);
-            } else {
-              throw error;
+                await sleep(delay);
+              } else {
+                throw error;
+              }
             }
           }
-        }
 
-        this.logger.error(
-          `Failed to call Bedrock after ${this.maxRetries + 1} attempts. Last error:`,
-          lastError || new Error('Unknown error'),
-        );
-        throw lastError || new Error('Unknown error');
-      } catch (err) {
-        span.setStatus({ code: SpanStatusCode.ERROR });
-        span.setAttributes({ outcome: 'error' });
-        throw err;
-      } finally {
-        span.end();
-      }
-    });
+          this.logger.error(
+            `Failed to call Bedrock after ${this.maxRetries + 1} attempts. Last error:`,
+            lastError || new Error('Unknown error'),
+          );
+          throw lastError || new Error('Unknown error');
+        } catch (err) {
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          span.setAttributes({ outcome: 'error' });
+          throw err;
+        }
+      },
+      { tracer },
+    );
   }
 
 
