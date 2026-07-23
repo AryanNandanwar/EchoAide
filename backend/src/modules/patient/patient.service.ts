@@ -9,7 +9,7 @@ import {
 import { Repository } from 'typeorm';
 import { Patient } from './entities/patient.entity';
 import { CreatePatientDto, UpdatePatientDto } from './dto/patient.dto';
-import { normalizePhone } from 'src/utils/phone.utils';
+import { normalizePhone } from '../../utils/phone.utils';
 import { Doctor } from '../doctor/doctor.entity';
 
 type MatchResult = {

@@ -23,7 +23,7 @@
     "test:websocket": "jest --config ./test/jest-websocket.json --runInBand --forceExit",
     "test:smoke": "jest --config ./test/jest-smoke.json --runInBand --forceExit",
     "start:e2e": "E2E_MODE=true ts-node -r tsconfig-paths/register test/e2e/playwright-server.ts",
-    "migration:run": "typeorm-ts-node-commonjs migration:run -d migration-datasource.ts"
+    "migration:run": "node -r ts-node/register -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:run -d migration-datasource.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.758.0",

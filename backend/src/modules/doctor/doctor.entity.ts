@@ -1,6 +1,6 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index, ManyToMany,  OneToMany } from 'typeorm';
 import { Patient } from '../patient/entities/patient.entity';
-import { ClinicalNote } from 'src/modules/clinical_notes/entity/clinical_notes.entity';
+import { ClinicalNote } from '../clinical_notes/entity/clinical_notes.entity';
 
 @Entity('doctors')
 export class Doctor {

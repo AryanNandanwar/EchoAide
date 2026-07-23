@@ -1,7 +1,7 @@
 // src/modules/patient/entities/patient.entity.ts
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, Index, JoinColumn, OneToMany, CreateDateColumn } from 'typeorm';
 import { Doctor } from '../../doctor/doctor.entity';
-import { ClinicalNote } from 'src/modules/clinical_notes/entity/clinical_notes.entity';
+import { ClinicalNote } from '../../clinical_notes/entity/clinical_notes.entity';
 
 @Entity('patients')
 export class Patient {

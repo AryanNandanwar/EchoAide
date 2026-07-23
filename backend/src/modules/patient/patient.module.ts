@@ -2,7 +2,7 @@
 import { Module } from '@nestjs/common';
 import { PatientService } from './patient.service';
 import { PatientController } from './patient.controller';
-import { DatabaseModule } from 'src/db/database.module';
+import { DatabaseModule } from '../../db/database.module';
 import { patientProviders } from './patient.provider';
 import { doctorProviders } from '../doctor/doctor.providers';
 
