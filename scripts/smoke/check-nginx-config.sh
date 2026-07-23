@@ -4,6 +4,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+SSL_CERT_DIR="${TMPDIR:-/tmp}/echoaide-nginx-smoke-certs"
+
+ensure_dummy_ssl_certs() {
+  mkdir -p "${SSL_CERT_DIR}"
+  if [[ ! -f "${SSL_CERT_DIR}/privkey.pem" || ! -f "${SSL_CERT_DIR}/fullchain.pem" ]]; then
+    openssl req -x509 -nodes -newkey rsa:2048 \
+      -keyout "${SSL_CERT_DIR}/privkey.pem" \
+      -out "${SSL_CERT_DIR}/fullchain.pem" \
+      -days 1 -subj /CN=app.echoaide.in >/dev/null 2>&1
+  fi
+}
 
 assert_proxy_routes() {
   local config="$1"
@@ -41,8 +52,17 @@ test_config() {
 
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     echo "==> nginx -t ${config_path} (docker)"
+    # --add-host: nginx -t resolves upstream hostnames; "backend" only exists
+    # on the compose network, not in this isolated container.
+    local volumes=(-v "${absolute_config}:/etc/nginx/conf.d/default.conf:ro")
+    if [[ "${config_path}" == *nginx-ssl.conf ]]; then
+      # Dummy certs: nginx-ssl.conf references Let's Encrypt paths absent here.
+      ensure_dummy_ssl_certs
+      volumes+=(-v "${SSL_CERT_DIR}:/etc/letsencrypt/live/app.echoaide.in:ro")
+    fi
     docker run --rm \
-      -v "${absolute_config}:/etc/nginx/conf.d/default.conf:ro" \
+      --add-host=backend:127.0.0.1 \
+      "${volumes[@]}" \
       nginx:alpine nginx -t
   else
     assert_structure "${config_path}"

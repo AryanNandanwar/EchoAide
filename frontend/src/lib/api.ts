@@ -1,7 +1,7 @@
 import axios from 'axios';
-import { clearAuth, ensureValidAccessToken, refreshAccessToken } from './auth';
+import { clearAuth, ensureValidAccessToken, refreshAccessToken } from './auth.ts';
 
-const BASE = import.meta.env.VITE_REACT_APP_API_BASE_URL || '';
+const BASE = import.meta.env?.VITE_REACT_APP_API_BASE_URL || '';
 
 export const api = axios.create({
   baseURL: BASE,

@@ -1,5 +1,5 @@
-import { supabase } from '../lib/supabase';
-import api from '../lib/api';
+import { supabase } from '../lib/supabase.ts';
+import api from '../lib/api.ts';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 
 export interface ClinicalNoteSubscription {
@@ -8,7 +8,7 @@ export interface ClinicalNoteSubscription {
   onError?: (error: Error) => void;
 }
 
-const useE2eApi = import.meta.env.VITE_E2E_USE_API === 'true';
+const useE2eApi = import.meta.env?.VITE_E2E_USE_API === 'true';
 
 function mapApiClinicalNoteToRecord(note: Record<string, unknown>) {
   return {

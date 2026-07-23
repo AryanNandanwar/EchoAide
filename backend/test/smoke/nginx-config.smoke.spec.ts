@@ -1,5 +1,6 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 const repoRoot = path.join(__dirname, '../../..');
@@ -13,10 +14,36 @@ function dockerAvailable(): boolean {
   }
 }
 
+/** Host-side dummy certs for nginx-ssl.conf (Let's Encrypt paths absent in CI). */
+function ensureDummySslCertDir(): string {
+  const certDir = path.join(os.tmpdir(), 'echoaide-nginx-smoke-certs');
+  fs.mkdirSync(certDir, { recursive: true });
+  const keyPath = path.join(certDir, 'privkey.pem');
+  const certPath = path.join(certDir, 'fullchain.pem');
+  if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+    execSync(
+      `openssl req -x509 -nodes -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 1 -subj /CN=app.echoaide.in`,
+      { stdio: 'pipe' },
+    );
+  }
+  return certDir;
+}
+
 function nginxConfigTestInDocker(configPath: string): void {
   const absoluteConfig = path.join(repoRoot, configPath);
+  // --add-host: nginx -t resolves upstream hostnames; "backend" only exists
+  // on the compose network, not in this isolated container.
+  const volumes = [
+    `-v "${absoluteConfig}:/etc/nginx/conf.d/default.conf:ro"`,
+  ];
+  if (configPath.endsWith('nginx-ssl.conf')) {
+    const certDir = ensureDummySslCertDir();
+    volumes.push(
+      `-v "${certDir}:/etc/letsencrypt/live/app.echoaide.in:ro"`,
+    );
+  }
   execSync(
-    `docker run --rm -v "${absoluteConfig}:/etc/nginx/conf.d/default.conf:ro" nginx:alpine nginx -t`,
+    `docker run --rm --add-host=backend:127.0.0.1 ${volumes.join(' ')} nginx:alpine nginx -t`,
     { stdio: 'pipe' },
   );
 }
