@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Puppeteer is mocked in tests; skip the ~150MB Chrome download on npm ci.
+  PUPPETEER_SKIP_DOWNLOAD: "true"
+  PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+
+jobs:
+  backend:
+    name: Backend (lint, build, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        # The package "lint" script uses --fix; lint read-only in CI.
+        # Non-blocking until pre-existing lint debt is cleared; remove
+        # continue-on-error to enforce.
+        run: npx eslint "{src,apps,libs,test}/**/*.ts"
+        continue-on-error: true
+      - name: Build
+        run: npm run build
+      - name: Unit tests
+        run: npm test
+      - name: API tests
+        run: npm run test:api
+      - name: Integration tests
+        run: npm run test:integration
+      - name: WebSocket tests
+        run: npm run test:websocket
+
+  frontend:
+    name: Frontend (lint, build, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22+ required by test:node (--experimental-strip-types)
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        # Non-blocking until pre-existing lint debt is cleared; remove
+        # continue-on-error to enforce.
+        run: npm run lint
+        continue-on-error: true
+      - name: Build
+        run: npm run build
+        env:
+          # Empty in production: nginx proxies /api and /socket.io on the same origin.
+          VITE_REACT_APP_API_BASE_URL: ""
+          VITE_REACT_APP_WEBSOCKET_URL: ""
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      - name: Component and hook tests (Vitest)
+        run: npm test
+      - name: Utility tests (Node test runner)
+        run: npm run test:node
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+            e2e/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Install e2e dependencies
+        run: npm ci
+        working-directory: e2e
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - name: Run Playwright tests
+        # playwright.config.ts webServer starts the E2E backend (port 3099)
+        # and the Vite dev server automatically.
+        run: npm test
+        working-directory: e2e
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: e2e/test-results/
+          retention-days: 7
+
+  smoke:
+    name: Infrastructure smoke (Docker)
+    runs-on: ubuntu-latest
+    needs: [backend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+      - name: Run infrastructure smoke suite
+        # nginx configs, CORS/Helmet, TypeORM migrations, composed backend+nginx stack
+        run: bash scripts/smoke/run-all.sh
+        env:
+          REQUIRE_MIGRATION_SMOKE: "1"

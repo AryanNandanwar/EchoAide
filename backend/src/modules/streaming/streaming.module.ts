@@ -3,7 +3,6 @@ import { StreamingService } from './streaming.service';
 import { SonioxClientService } from './soniox-client.service';
 import { IncrementalNoteService } from './incremental-note.service';
 import { AudioUploadController } from './audio-upload.controller';
-import { SseModule } from '../sse/sse.module';
 import { ClinicalNotesModule } from '../clinical_notes/clinical-notes.module';
 import { IntakeModule } from '../intake/intake.module';
 
@@ -11,6 +10,6 @@ import { IntakeModule } from '../intake/intake.module';
   controllers: [AudioUploadController],
   providers: [StreamingService, SonioxClientService, IncrementalNoteService],
   exports: [StreamingService, SonioxClientService, IncrementalNoteService],
-  imports: [SseModule, ClinicalNotesModule, IntakeModule],
+  imports: [ClinicalNotesModule, IntakeModule],
 })
 export class StreamingModule {}

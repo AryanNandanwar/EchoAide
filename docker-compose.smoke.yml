@@ -1,0 +1,77 @@
+# Smoke-test stack: Postgres + backend + nginx (HTTP on localhost:8082).
+# Usage: bash scripts/smoke/run-all.sh
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: echoaide-smoke-postgres
+    environment:
+      POSTGRES_USER: smoke
+      POSTGRES_PASSWORD: smoke
+      POSTGRES_DB: echoaide_smoke
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smoke -d echoaide_smoke"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./backend
+    container_name: echoaide-smoke-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SUPABASE_DB_URL: postgres://smoke:smoke@postgres:5432/echoaide_smoke
+      DATABASE_SSL: "false"
+      NODE_ENV: production
+      FRONTEND_ORIGIN: http://localhost:8082
+      APP_JWT_SECRET: smoke-test-secret-min-32-chars-long
+      JWT_SECRET: smoke-test-secret-min-32-chars-long
+      JWT_ACCESS_EXPIRATION: 1h
+      JWT_REFRESH_EXPIRATION: 30d
+      SONIOX_API_KEY: smoke-placeholder
+      AWS_REGION: ap-south-1
+      AWS_ACCESS_KEY_ID: smoke
+      AWS_SECRET_ACCESS_KEY: smoke
+      BEDROCK_MODEL_ID: amazon.nova-lite-v1:0
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then((r)=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 40s
+
+  nginx:
+    build:
+      context: ./frontend
+      args:
+        VITE_REACT_APP_API_BASE_URL: ""
+        VITE_SUPABASE_URL: https://placeholder.supabase.co
+        VITE_SUPABASE_ANON_KEY: placeholder-anon-key
+        VITE_REACT_APP_WEBSOCKET_URL: ""
+    container_name: echoaide-smoke-nginx
+    ports:
+      - "8082:80"
+    volumes:
+      - ./frontend/nginx-local.conf:/etc/nginx/conf.d/default.conf:ro
+    command: >
+      /bin/sh -c "rm -f /etc/nginx/conf.d/ssl.conf && nginx -g 'daemon off;'"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 5s
+      retries: 12

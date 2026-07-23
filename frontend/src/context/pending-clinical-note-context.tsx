@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -88,6 +89,24 @@ export function PendingClinicalNoteProvider({ children }: { children: ReactNode 
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (import.meta.env.VITE_E2E_USE_API !== "true") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const e2eNoteId = params.get("e2eNote");
+    if (!e2eNoteId || noteId) {
+      return;
+    }
+
+    const patientName = params.get("e2ePatientName");
+    beginNote(
+      e2eNoteId,
+      patientName ? { name: patientName } : undefined,
+    );
+  }, [beginNote, noteId]);
 
   const value = useMemo(
     () => ({

@@ -4,7 +4,7 @@ import { SonioxClientService } from './soniox-client.service';
 import { IncrementalNoteService } from './incremental-note.service';
 import { ClinicalNotesService } from '../clinical_notes/clinical-notes.service';
 import { IntakeService } from '../intake/intake.service';
-import { type ParsedNote } from '../sse/schemas/parsed-note.schema';
+import { type ParsedNote } from './schemas/parsed-note.schema';
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
@@ -52,6 +52,10 @@ class MockSonioxClientService {
   }
 
   async sendAudioChunk(_sessionId: string, _audioBuffer: ArrayBuffer): Promise<void> {
+    return;
+  }
+
+  async finalizeSession(_sessionId: string): Promise<void> {
     return;
   }
 

@@ -10,6 +10,10 @@ import {
   useStreamingTranscription,
   type NoteGenerationSkippedPayload,
 } from "../hooks/use-streaming-transcription";
+import {
+  STREAMING_AUDIO_SAMPLE_RATE,
+  float32SamplesToPcmS16le,
+} from "../utils/audio-pcm";
 import { getWebSocketUrl } from "../lib/websocket-url";
 import { ensureValidAccessToken, getStoredUser, hasValidSession } from "../lib/auth";
 import { useNavigate } from "react-router-dom";
@@ -75,6 +79,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     isConnected,
     error,
     startRecording,
+    startStreamingSession,
     pauseRecording,
     resumeRecording,
     stopRecording,
@@ -254,6 +259,37 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     console.log('File selection completed');
   };
 
+  // Decode an uploaded audio file (WAV/MP3/M4A/OGG) into 16 kHz mono PCM16,
+  // the format the backend streams to the transcription service.
+  const decodeFileToStreamingPcm = async (file: File): Promise<Int16Array> => {
+    const arrayBuffer = await file.arrayBuffer();
+
+    const decodeContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    let decoded: AudioBuffer;
+    try {
+      decoded = await decodeContext.decodeAudioData(arrayBuffer);
+    } catch {
+      throw new Error('Could not decode the audio file. Please upload a valid WAV, MP3, M4A, or OGG file.');
+    } finally {
+      void decodeContext.close();
+    }
+
+    // Resample + downmix to 16 kHz mono
+    const targetLength = Math.ceil(decoded.duration * STREAMING_AUDIO_SAMPLE_RATE);
+    if (targetLength === 0) {
+      throw new Error('The audio file appears to be empty.');
+    }
+
+    const offlineContext = new OfflineAudioContext(1, targetLength, STREAMING_AUDIO_SAMPLE_RATE);
+    const source = offlineContext.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offlineContext.destination);
+    source.start();
+    const rendered = await offlineContext.startRendering();
+
+    return float32SamplesToPcmS16le(rendered.getChannelData(0));
+  };
+
   // Handle generate note from uploaded file
   const handleGenerateNoteFromUpload = async () => {
     if (!selectedFile) {
@@ -261,23 +297,39 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       return;
     }
 
+    const doctorId = getDoctorId();
+    if (!doctorId) {
+      onError?.("Doctor ID not found. Please log in again.");
+      return;
+    }
+
     setIsGeneratingFromUpload(true);
     clearError();
 
     try {
-      // Convert file to base64 for processing using browser-compatible method
-      const arrayBuffer = await selectedFile.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-      const base64Audio = btoa(String.fromCharCode(...uint8Array));
+      const pcmSamples = await decodeFileToStreamingPcm(selectedFile);
 
-      // Start recording session using the hook's method
-      await startRecording();
+      const sessionId = await startStreamingSession();
+      if (!sessionId) {
+        onError?.('Failed to start streaming session for uploaded audio.');
+        return;
+      }
 
-      // Process the entire file in chunks to simulate real-time streaming
-      await processAudioFileInChunks(base64Audio);
+      // Give the backend a moment to establish the transcription session
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      // Stop recording to trigger final note generation
-      await stopRecording();
+      await streamPcmInChunks(pcmSamples);
+
+      // Allow in-flight transcripts to arrive before requesting the final note
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      const noteId = generateUUID();
+
+      // Open the pending-note view and immediately request final note generation.
+      // These must stay back-to-back: opening the view unmounts this component,
+      // so the stop message has to be emitted in the same synchronous block.
+      onNoteIdGenerated?.(noteId);
+      stopRecording(noteId, doctorId, { patientId, intakeId });
 
       // Clean up
       setSelectedFile(null);
@@ -293,23 +345,34 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     }
   };
 
-  // Process audio file in chunks to simulate real-time streaming
-  const processAudioFileInChunks = async (base64Audio: string) => {
-    const chunkSize = 1024 * 16; // 16KB chunks
-    const totalLength = base64Audio.length;
+  // Stream PCM16 audio over the websocket in ~1 second chunks
+  const streamPcmInChunks = async (pcmSamples: Int16Array) => {
+    const bytes = new Uint8Array(pcmSamples.buffer, pcmSamples.byteOffset, pcmSamples.byteLength);
+    const chunkBytes = STREAMING_AUDIO_SAMPLE_RATE * 2; // 1 second of PCM16 audio
     let offset = 0;
 
-    while (offset < totalLength) {
-      const chunk = base64Audio.slice(offset, offset + chunkSize);
-      
-      // Send audio chunk through the existing WebSocket connection
-      sendAudioChunk(chunk, Date.now());
-      
-      offset += chunkSize;
-      
-      // Small delay to simulate real-time streaming
-      await new Promise(resolve => setTimeout(resolve, 100));
+    while (offset < bytes.length) {
+      const chunk = bytes.subarray(offset, offset + chunkBytes);
+      sendAudioChunk(bytesToBase64(chunk), Date.now());
+      offset += chunkBytes;
+
+      // Pace the upload so the transcription service can keep up
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
+  };
+
+  // btoa-safe base64 encoding for large buffers (avoids call stack overflow
+  // from String.fromCharCode(...bytes) on big files)
+  const bytesToBase64 = (bytes: Uint8Array): string => {
+    let binary = '';
+    const blockSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += blockSize) {
+      binary += String.fromCharCode.apply(
+        null,
+        bytes.subarray(i, i + blockSize) as unknown as number[],
+      );
+    }
+    return btoa(binary);
   };
 
   // Trigger file input click

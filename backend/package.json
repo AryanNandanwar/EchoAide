@@ -18,9 +18,15 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:integration": "jest --config ./test/jest-integration.json --runInBand",
+    "test:api": "jest --config ./test/jest-api.json --runInBand",
+    "test:websocket": "jest --config ./test/jest-websocket.json --runInBand --forceExit",
+    "test:smoke": "jest --config ./test/jest-smoke.json --runInBand --forceExit",
+    "start:e2e": "E2E_MODE=true ts-node -r tsconfig-paths/register test/e2e/playwright-server.ts",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d migration-datasource.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.758.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.0.1",
@@ -31,9 +37,19 @@
     "@nestjs/platform-socket.io": "^11.1.17",
     "@nestjs/typeorm": "^11.0.0",
     "@nestjs/websockets": "^11.1.17",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/api-logs": "^0.215.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.73.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.215.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.215.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
+    "@opentelemetry/resources": "^2.7.0",
+    "@opentelemetry/sdk-logs": "^0.215.0",
+    "@opentelemetry/sdk-metrics": "^2.7.0",
+    "@opentelemetry/sdk-node": "^0.215.0",
+    "@opentelemetry/semantic-conventions": "^1.40.0",
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/supabase-js": "^2.81.1",
-    "@aws-sdk/client-bedrock-runtime": "^3.758.0",
     "@types/passport-jwt": "^4.0.1",
     "@types/puppeteer": "^7.0.4",
     "bcrypt": "^6.0.0",
@@ -70,7 +86,9 @@
     "jest": "^30.0.0",
     "nodemon": "^3.1.11",
     "prettier": "^3.4.2",
+    "socket.io-client": "^4.8.3",
     "source-map-support": "^0.5.21",
+    "sqlite3": "^5.1.7",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
     "ts-loader": "^9.5.2",
@@ -89,6 +107,9 @@
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^test/(.*)$": "<rootDir>/../test/$1"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

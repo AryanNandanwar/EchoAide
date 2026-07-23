@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, JoinColumn, CreateDateColumn } from 'typeorm';
 import { Doctor } from '../../doctor/doctor.entity';
 import { Patient } from 'src/modules/patient/entities/patient.entity';
 
@@ -19,7 +19,7 @@ export class ClinicalNote {
   @Index() // helps searches
   problemsFaced: string;
 
-  @Column({type: 'enum', enum: ['Draft', 'Confirmed'], name: 'status', default: 'Draft'})
+  @Column({ type: 'varchar', length: 20, name: 'status', default: 'Draft' })
   @Index() // helps searches
   status: string;
 
@@ -43,7 +43,7 @@ export class ClinicalNote {
   @Index() // helps searches
   investigationsAdvised: string;
 
-  @Column({ type: 'timestamptz', default: () => 'now()', name: 'created_at' })
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
   @Column({ name: 'doctor_id', type: 'uuid' })

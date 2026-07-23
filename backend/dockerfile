@@ -5,7 +5,10 @@ WORKDIR /app
 
 # We need devDependencies (like @nestjs/cli) to run the build command
 COPY package*.json ./
-RUN npm ci
+RUN npm config set fetch-retries 5 \
+    && npm config set fetch-retry-mintimeout 20000 \
+    && npm config set fetch-retry-maxtimeout 120000 \
+    && npm ci
 
 COPY . .
 RUN npm run build
@@ -31,7 +34,10 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
 
 # Only install production dependencies here
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm config set fetch-retries 5 \
+    && npm config set fetch-retry-mintimeout 20000 \
+    && npm config set fetch-retry-maxtimeout 120000 \
+    && npm ci --omit=dev
 
 # Copy only the compiled JS from the builder stage
 COPY --from=builder /app/dist ./dist

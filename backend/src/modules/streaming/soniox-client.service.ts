@@ -25,6 +25,7 @@ export interface SonioxSession {
   onTranscript: (transcript: string, isPartial: boolean) => void;
   isActive: boolean;
   configured: boolean;
+  finished: boolean;
   transcriptBuffer: string[];
 }
 
@@ -94,7 +95,7 @@ export class SonioxClientService {
 
     try {
       // Create WebSocket connection to Soniox
-      const wsUrl = 'wss://stt-rt.soniox.com/transcribe-websocket';
+      const wsUrl = process.env.SONIOX_WS_URL || 'wss://stt-rt.soniox.com/transcribe-websocket';
       
       console.log(`🔌 Connecting to ${wsUrl}...`);
       console.log(`@ Connection config:`, {
@@ -118,6 +119,7 @@ export class SonioxClientService {
         onTranscript,
         isActive: false,
         configured: false,
+        finished: false,
         transcriptBuffer: []
       };
 
@@ -232,6 +234,43 @@ export class SonioxClientService {
     }
   }
 
+  /**
+   * Signal end-of-audio to Soniox and wait until it confirms all buffered audio
+   * has been transcribed (a `finished` frame) so the final transcript is complete.
+   * Keeps the session in the map so transcripts can still be read afterwards.
+   */
+  async finalizeSession(sessionId: string, timeoutMs = 10_000): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.finished) {
+      return;
+    }
+
+    if (session.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      // Empty frame tells Soniox no more audio is coming
+      session.ws.send(Buffer.alloc(0));
+    } catch (error) {
+      this.logger.warn(`Failed to send end-of-audio frame for session ${sessionId}: ${error.message}`);
+      return;
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const current = this.sessions.get(sessionId);
+      if (!current || current.finished || current.ws.readyState !== WebSocket.OPEN) {
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    this.logger.debug(
+      `Session ${sessionId} finalized (finished: ${this.sessions.get(sessionId)?.finished ?? 'session gone'})`,
+    );
+  }
+
   async stopSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -244,15 +283,17 @@ export class SonioxClientService {
 
     try {
       if (session.ws.readyState === WebSocket.OPEN) {
-        // Send empty frame to gracefully close the session
-        session.ws.send(Buffer.alloc(0));
-        
-        // Wait longer for final results to be processed
-        this.logger.debug(`Waiting 3 seconds for final transcripts to be processed...`);
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        
-        this.logger.debug(`Final buffer size after wait: ${session.transcriptBuffer.length}`);
-        
+        if (!session.finished) {
+          // Send empty frame to gracefully close the session
+          session.ws.send(Buffer.alloc(0));
+
+          // Wait longer for final results to be processed
+          this.logger.debug(`Waiting 3 seconds for final transcripts to be processed...`);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
+          this.logger.debug(`Final buffer size after wait: ${session.transcriptBuffer.length}`);
+        }
+
         if (session.ws.readyState === WebSocket.OPEN) {
           session.ws.close(1000, 'Session stopped normally');
         }
@@ -464,10 +505,11 @@ export class SonioxClientService {
         this.logger.log(`Session ${sessionId} configured successfully`);
       }
       
-      // Check if this is a finished response
+      // Check if this is a finished response; still fall through so any final
+      // tokens included in the finished frame are processed
       if (message.finished) {
         this.logger.log(`Received finished response from Soniox for session ${sessionId}`);
-        return;
+        session.finished = true;
       }
 
       // Check for error response

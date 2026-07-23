@@ -1,15 +1,44 @@
-/** Socket.IO server URL (same origin when behind nginx in Docker/production). */
-export function getWebSocketUrl(): string {
-  const fromEnv = import.meta.env.VITE_REACT_APP_WEBSOCKET_URL;
-  if (fromEnv && fromEnv.trim() !== "") return fromEnv.trim();
+export type WebSocketUrlOptions = {
+  configuredUrl?: string;
+  isDev?: boolean;
+  apiBaseUrl?: string;
+  windowOrigin?: string;
+};
 
-  // Vite dev server (:5173) does not host Socket.IO — use the Nest backend.
-  if (import.meta.env.DEV) {
-    const apiBase = import.meta.env.VITE_REACT_APP_API_BASE_URL;
-    if (apiBase && String(apiBase).trim() !== "") return String(apiBase).trim();
+/** Pure resolver for Socket.IO server URL (testable without Vite env). */
+export function resolveWebSocketUrl({
+  configuredUrl,
+  isDev = false,
+  apiBaseUrl,
+  windowOrigin,
+}: WebSocketUrlOptions): string {
+  if (configuredUrl?.trim()) {
+    return configuredUrl.trim();
+  }
+
+  if (isDev) {
+    if (apiBaseUrl?.trim()) {
+      return apiBaseUrl.trim();
+    }
+    if (windowOrigin) {
+      return windowOrigin;
+    }
     return "http://localhost:3000";
   }
 
-  if (typeof window !== "undefined") return window.location.origin;
+  if (windowOrigin) {
+    return windowOrigin;
+  }
+
   return "http://localhost:3000";
+}
+
+/** Socket.IO server URL (same origin when behind nginx in Docker/production). */
+export function getWebSocketUrl(): string {
+  return resolveWebSocketUrl({
+    configuredUrl: import.meta.env.VITE_REACT_APP_WEBSOCKET_URL,
+    isDev: import.meta.env.DEV,
+    apiBaseUrl: import.meta.env.VITE_REACT_APP_API_BASE_URL,
+    windowOrigin: typeof window !== "undefined" ? window.location.origin : undefined,
+  });
 }

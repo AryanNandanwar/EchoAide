@@ -74,6 +74,10 @@ export class AudioUploadController {
     @Req() req: Request,
     @Body() body: { patientId?: string; doctorId?: string } = {},
   ) {
+    if (!file) {
+      throw new HttpException('Audio file is required.', HttpStatus.BAD_REQUEST);
+    }
+
     try {
       this.logger.log(`Processing audio upload: ${file.originalname} (${file.size} bytes)`);
 

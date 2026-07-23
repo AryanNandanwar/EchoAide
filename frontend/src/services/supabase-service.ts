@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
-import { RealtimeChannel } from '@supabase/supabase-js';
-
+import api from '../lib/api';
+import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 
 export interface ClinicalNoteSubscription {
   noteId: string;
@@ -8,14 +8,40 @@ export interface ClinicalNoteSubscription {
   onError?: (error: Error) => void;
 }
 
+const useE2eApi = import.meta.env.VITE_E2E_USE_API === 'true';
+
+function mapApiClinicalNoteToRecord(note: Record<string, unknown>) {
+  return {
+    id: note.id,
+    patient_details: note.patientDetails,
+    medical_history: note.medicalHistory,
+    problems_faced: note.problemsFaced,
+    findings: note.findings,
+    diagnosis: note.diagnosis,
+    investigations_advised: note.investigationsAdvised,
+    doctor_instructions: note.doctorInstructions,
+    medication_prescribed: note.medicationPrescribed,
+  };
+}
+
 export class SupabaseService {
+  private readonly client: SupabaseClient;
   private subscriptions: Map<string, RealtimeChannel> = new Map();
   private activeFetches: Map<string, Promise<any>> = new Map();
   private subscriptionStates: Map<string, 'SUBSCRIBING' | 'SUBSCRIBED' | 'ERROR'> = new Map();
+  private apiPollers: Map<string, { cancelled: boolean }> = new Map();
+
+  constructor(client: SupabaseClient = supabase) {
+    this.client = client;
+  }
 
   
   subscribeToClinicalNote(subscription: ClinicalNoteSubscription): () => void {
     const { noteId, onNoteGenerated, onError } = subscription;
+
+    if (useE2eApi) {
+      return this.subscribeToClinicalNoteViaApi(noteId, onNoteGenerated, onError);
+    }
     
     // Check if already subscribed or subscribing
     const existingState = this.subscriptionStates.get(noteId);
@@ -27,7 +53,7 @@ export class SupabaseService {
     console.log(`🔔 Subscribing to clinical note: ${noteId}`);
     this.subscriptionStates.set(noteId, 'SUBSCRIBING');
 
-    const channel = supabase
+    const channel = this.client
       .channel(`clinical_note_${noteId}`)
       .on(
         'postgres_changes',
@@ -111,13 +137,73 @@ export class SupabaseService {
   }
 
   unsubscribeFromClinicalNote(noteId: string): void {
+    const poller = this.apiPollers.get(noteId);
+    if (poller) {
+      poller.cancelled = true;
+      this.apiPollers.delete(noteId);
+    }
+
     const channel = this.subscriptions.get(noteId);
     if (channel) {
       console.log(`🔕 Unsubscribing from clinical note: ${noteId}`);
-      supabase.removeChannel(channel);
+      this.client.removeChannel(channel);
       this.subscriptions.delete(noteId);
       this.subscriptionStates.delete(noteId);
     }
+  }
+
+  private subscribeToClinicalNoteViaApi(
+    noteId: string,
+    onNoteGenerated: (note: any) => void,
+    onError?: (error: Error) => void,
+  ): () => void {
+    const existingState = this.subscriptionStates.get(noteId);
+    if (existingState === 'SUBSCRIBING' || existingState === 'SUBSCRIBED') {
+      return () => this.unsubscribeFromClinicalNote(noteId);
+    }
+
+    console.log(`🔔 [E2E] Polling API for clinical note: ${noteId}`);
+    this.subscriptionStates.set(noteId, 'SUBSCRIBING');
+
+    const poller = { cancelled: false };
+    this.apiPollers.set(noteId, poller);
+
+    const poll = async () => {
+      const maxAttempts = 60;
+      for (let attempt = 0; attempt < maxAttempts && !poller.cancelled; attempt++) {
+        try {
+          const note = await this.fetchClinicalNoteViaApi(noteId);
+          if (note && !poller.cancelled) {
+            this.subscriptionStates.set(noteId, 'SUBSCRIBED');
+            onNoteGenerated(note);
+            return;
+          }
+        } catch (error) {
+          const status = (error as { response?: { status?: number } })?.response?.status;
+          if (status && status !== 404) {
+            onError?.(error instanceof Error ? error : new Error('Failed to fetch clinical note'));
+            return;
+          }
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      if (!poller.cancelled) {
+        onError?.(new Error('Failed to subscribe to clinical note'));
+      }
+    };
+
+    void poll();
+
+    return () => {
+      this.unsubscribeFromClinicalNote(noteId);
+    };
+  }
+
+  private async fetchClinicalNoteViaApi(noteId: string): Promise<any | null> {
+    const response = await api.get(`/api/clinical-notes/${noteId}`);
+    return mapApiClinicalNoteToRecord(response.data);
   }
 
   async fetchClinicalNote(noteId: string): Promise<any> {
@@ -143,6 +229,29 @@ export class SupabaseService {
   }
 
   private async _fetchClinicalNoteWithRetry(noteId: string): Promise<any> {
+    if (useE2eApi) {
+      const maxRetries = 10;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const note = await this.fetchClinicalNoteViaApi(noteId);
+          if (note) {
+            return note;
+          }
+        } catch (error) {
+          const status = (error as { response?: { status?: number } })?.response?.status;
+          if (status && status !== 404) {
+            throw error;
+          }
+        }
+
+        if (attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+
+      throw new Error(`No clinical note found with ID: ${noteId}`);
+    }
+
     try {
       console.log(`🔍 Fetching clinical note ${noteId} using service role client...`);
     
@@ -153,7 +262,7 @@ export class SupabaseService {
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         console.log(`🔄 Attempt ${attempt}/${maxRetries} to fetch note ${noteId}`);
         
-        const { data, error } = await supabase
+        const { data, error } = await this.client
           .from('clinical_notes')
           .select('*')
           .eq('id', noteId);
@@ -194,7 +303,7 @@ export class SupabaseService {
   cleanup(): void {
     console.log('🧹 Cleaning up all Supabase subscriptions and active fetches');
     this.subscriptions.forEach((channel) => {
-      supabase.removeChannel(channel);
+      this.client.removeChannel(channel);
     });
     this.subscriptions.clear();
     

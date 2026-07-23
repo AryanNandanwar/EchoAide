@@ -549,6 +549,7 @@ export default function HomePage() {
       {!activeIntakeId && !viewerNoteId && (
         <AudioRecorder
           websocketUrl={getWebSocketUrl()}
+          onError={(message) => setIntakeRecordingError(message)}
           isGeneratingNote={isGeneratingNote}
           isNoteReady={isNoteReady}
           onSessionStart={handleSessionStart}

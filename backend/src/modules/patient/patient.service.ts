@@ -132,7 +132,7 @@ export class PatientService {
       .createQueryBuilder('p')
       .where('p.doctorId = :doctorId', { doctorId })
       .andWhere(
-        '(p.fullName ILIKE :q OR p.phone ILIKE :q)',
+        '(LOWER(p.fullName) LIKE LOWER(:q) OR p.phone LIKE :q)',
         { q: `%${q}%` },
       )
       .orderBy('p.createdAt', 'DESC')
@@ -146,8 +146,8 @@ export class PatientService {
 
     return this.patientRepo
       .createQueryBuilder('p')
-      .where('p.fullName ILIKE :q', { q: `%${q}%` })
-      .orWhere('p.phone ILIKE :q', { q: `%${q}%` })
+      .where('LOWER(p.fullName) LIKE LOWER(:q)', { q: `%${q}%` })
+      .orWhere('p.phone LIKE :q', { q: `%${q}%` })
       .orderBy('p.createdAt', 'DESC')
       .limit(limit)
       .getMany();
@@ -231,11 +231,11 @@ export class PatientService {
             }
           }
         } catch {
-          // fallback: partial ILIKE
+          // fallback: partial name match when pg_trgm is unavailable
           const like = await this.patientRepo
             .createQueryBuilder('p')
             .where('p.doctorId = :doctorId', { doctorId })
-            .andWhere('p.fullName ILIKE :n', { n: `%${extracted.fullName}%` })
+            .andWhere('LOWER(p.fullName) LIKE LOWER(:n)', { n: `%${extracted.fullName}%` })
             .limit(limit)
             .getMany();
 

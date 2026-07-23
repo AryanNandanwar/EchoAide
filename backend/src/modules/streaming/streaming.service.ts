@@ -1,10 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { SpanStatusCode } from '@opentelemetry/api';
 import { SonioxClientService } from './soniox-client.service';
 import { IncrementalNoteService } from './incremental-note.service';
+import { type ParsedNote } from './schemas/parsed-note.schema';
 import { ClinicalNotesService } from '../clinical_notes/clinical-notes.service';
 import { CreateClinicalNoteDto } from '../clinical_notes/dto/clinical-note.dto';
 import { IntakeService } from '../intake/intake.service';
 import { mergePatientDetails } from '../clinical_notes/patient-details.util';
+import {
+  clinicalNoteGenerated,
+  streamingSessionCompleted,
+  streamingSessionStarted,
+  tracer,
+  withSpan,
+} from '../../otel-instruments';
 
 export interface StreamingSession {
   clientId: string;
@@ -39,6 +48,40 @@ export function getNoteSkipReasonForTranscript(transcript: string): NoteSkipReas
   return 'transcript_too_short';
 }
 
+const NOT_MENTIONED = 'Not mentioned';
+
+function isMeaningfulNoteValue(value: unknown): boolean {
+  if (value == null) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return value.trim() !== '' && value !== NOT_MENTIONED;
+  }
+  if (Array.isArray(value)) {
+    return value.some(item => isMeaningfulNoteValue(item));
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return Object.keys(record).some(key => isMeaningfulNoteValue(record[key]));
+  }
+  return false;
+}
+
+export function isNoteUnusable(note: Partial<ParsedNote>): boolean {
+  const sections: (keyof ParsedNote)[] = [
+    'patientDetails',
+    'medicalHistory',
+    'problemFaced',
+    'findings',
+    'diagnosis',
+    'investigationsAdvised',
+    'doctorInstructions',
+    'medicationPrescribed',
+  ];
+
+  return !sections.some(section => isMeaningfulNoteValue(note[section]));
+}
+
 @Injectable()
 export class StreamingService {
   private readonly logger = new Logger(StreamingService.name);
@@ -53,34 +96,47 @@ export class StreamingService {
   ) {}
 
   async startRecording(clientId: string, sessionId: string): Promise<void> {
-    this.logger.log(`Starting recording session ${sessionId} for client ${clientId}`);
+    return withSpan(
+      'streaming.session.start',
+      async (span) => {
+        span.setAttributes({
+          'session.id': sessionId,
+          'client.id': clientId,
+        });
 
-    // Initialize session
-    const now = Date.now();
-    const session: StreamingSession = {
-      clientId,
-      sessionId,
-      isRecording: true,
-      isPaused: false,
-      startTime: now,
-      lastAudioAt: now,
-      transcriptBuffer: [],
-    };
+        try {
+          this.logger.log(`Starting recording session ${sessionId} for client ${clientId}`);
 
-    this.sessions.set(sessionId, session);
+          const now = Date.now();
+          const session: StreamingSession = {
+            clientId,
+            sessionId,
+            isRecording: true,
+            isPaused: false,
+            startTime: now,
+            lastAudioAt: now,
+            transcriptBuffer: [],
+          };
 
-    // Start Soniox streaming connection
-    try {
-      await this.sonioxClient.startSession(sessionId, (transcript, isPartial) => {
-        this.appendFinalTranscript(sessionId, transcript, isPartial);
-      });
-      this.startKeepaliveTimer(sessionId);
-    } catch (error) {
-      this.logger.error(`Failed to start Soniox session: ${error.message}`);
-      this.sessions.delete(sessionId);
-      
-      throw error;
-    }
+          this.sessions.set(sessionId, session);
+
+          await this.sonioxClient.startSession(sessionId, (transcript, isPartial) => {
+            this.appendFinalTranscript(sessionId, transcript, isPartial);
+          });
+          this.startKeepaliveTimer(sessionId);
+
+          streamingSessionStarted.add(1, { outcome: 'success' });
+          span.setAttributes({ outcome: 'success' });
+        } catch (error) {
+          streamingSessionStarted.add(1, { outcome: 'error' });
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          span.setAttributes({ outcome: 'error', 'error.type': 'soniox_start_failed' });
+          this.sessions.delete(sessionId);
+          throw error;
+        }
+      },
+      { tracer },
+    );
   }
 
   async pauseRecording(clientId: string, sessionId: string): Promise<void> {
@@ -123,62 +179,122 @@ export class StreamingService {
     intakeId?: string,
     patientDetails?: Record<string, string>,
   ): Promise<StopRecordingResult> {
-    this.logger.log(`Stopping recording session ${sessionId} for client ${clientId} with noteId: ${noteId}`);
+    return withSpan(
+      'streaming.session.stop',
+      async (span) => {
+        span.setAttributes({
+          'session.id': sessionId,
+          'client.id': clientId,
+          'note.id': noteId,
+          ...(doctorId ? { 'doctor.id': doctorId } : {}),
+          ...(patientId ? { 'patient.id': patientId } : {}),
+          ...(intakeId ? { 'intake.id': intakeId } : {}),
+        });
 
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
+        try {
+          this.logger.log(
+            `Stopping recording session ${sessionId} for client ${clientId} with noteId: ${noteId}`,
+          );
 
-    session.isRecording = false;
-    this.stopKeepaliveTimer(session);
+          const session = this.sessions.get(sessionId);
+          if (!session) {
+            throw new Error(`Session ${sessionId} not found`);
+          }
 
-    if (!doctorId) {
-      this.logger.warn(`Doctor ID not provided, skipping note storage`);
-      await this.endSessionWithoutNote(sessionId);
-      return { outcome: 'note_skipped', reason: 'no_doctor_id', noteId };
-    }
+          session.isRecording = false;
+          this.stopKeepaliveTimer(session);
 
-    // Get final transcript BEFORE stopping the Soniox session
-    let finalTranscript = '';
-    try {
-      const sonioxBuffer = this.sonioxClient.getFinalTranscript(sessionId);
-      const mergedBuffer = [...session.transcriptBuffer, ...sonioxBuffer];
-      finalTranscript = this.createCleanTranscript(mergedBuffer);
-      this.logger.log(`Final transcript for note generation: ${finalTranscript.substring(0, 400)}...`);
-    } catch (error) {
-      this.logger.error(`Failed to get final transcript: ${error.message}`);
-    }
+          if (!doctorId) {
+            this.logger.warn(`Doctor ID not provided, skipping note storage`);
+            await this.endSessionWithoutNote(sessionId);
+            streamingSessionCompleted.add(1, { outcome: 'skipped', reason: 'no_doctor_id' });
+            span.setAttributes({ outcome: 'skipped', 'skip.reason': 'no_doctor_id' });
+            return {
+              outcome: 'note_skipped' as const,
+              reason: 'no_doctor_id' as const,
+              noteId,
+            };
+          }
 
-    if (isTranscriptTooShortForNote(finalTranscript)) {
-      const reason = getNoteSkipReasonForTranscript(finalTranscript);
-      this.logger.warn(`${reason}, skipping note generation`);
-      await this.endSessionWithoutNote(sessionId);
-      return { outcome: 'note_skipped', reason, noteId };
-    }
+          // Flush the transcription session first so in-flight audio (important for
+          // uploaded files streamed faster than realtime) is fully transcribed
+          // before we read the final transcript.
+          try {
+            await this.sonioxClient.finalizeSession(sessionId);
+          } catch (error) {
+            this.logger.error(
+              `Failed to finalize Soniox session: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
 
-    try {
-      await this.sonioxClient.stopSession(sessionId);
-    } catch (error) {
-      this.logger.error(`Failed to stop Soniox session: ${error.message}`);
-    }
+          let finalTranscript = '';
+          try {
+            const sonioxBuffer = this.sonioxClient.getFinalTranscript(sessionId);
+            const mergedBuffer = [...session.transcriptBuffer, ...sonioxBuffer];
+            finalTranscript = this.createCleanTranscript(mergedBuffer);
+            span.setAttributes({ 'transcript.length': finalTranscript.length });
+            this.logger.log(
+              `Final transcript for note generation: ${finalTranscript.substring(0, 400)}...`,
+            );
+          } catch (error) {
+            this.logger.error(
+              `Failed to get final transcript: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
 
-    try {
-      const finalNote = await this.incrementalNoteService.generateFinalNote(finalTranscript);
+          if (isTranscriptTooShortForNote(finalTranscript)) {
+            const reason = getNoteSkipReasonForTranscript(finalTranscript);
+            this.logger.warn(`${reason}, skipping note generation`);
+            await this.endSessionWithoutNote(sessionId);
+            streamingSessionCompleted.add(1, { outcome: 'skipped', reason });
+            span.setAttributes({ outcome: 'skipped', 'skip.reason': reason });
+            return { outcome: 'note_skipped' as const, reason: reason as NoteSkipReason, noteId };
+          }
 
-      this.logger.log(`Storing clinical note in backend for session ${sessionId} with noteId: ${noteId}`);
-      await this.storeClinicalNote(finalNote, doctorId, noteId, patientId, patientDetails);
-      if (intakeId) {
-        await this.intakeService.completeForDoctor(doctorId, intakeId);
-      }
-    } catch (error) {
-      this.logger.error(`Failed to generate and store final note: ${error.message}`);
-      this.scheduleSessionCleanup(sessionId);
-      return { outcome: 'note_failed', reason: error.message, noteId };
-    }
+          try {
+            await this.sonioxClient.stopSession(sessionId);
+          } catch (error) {
+            this.logger.error(
+              `Failed to stop Soniox session: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
 
-    this.scheduleSessionCleanup(sessionId);
-    return { outcome: 'note_created', noteId };
+          try {
+            const finalNote = await this.generateFinalNote(finalTranscript);
+
+            this.logger.log(
+              `Storing clinical note in backend for session ${sessionId} with noteId: ${noteId}`,
+            );
+            await this.storeClinicalNote(finalNote, doctorId, noteId, patientId, patientDetails);
+            if (intakeId) {
+              await this.intakeService.completeForDoctor(doctorId, intakeId);
+            }
+            streamingSessionCompleted.add(1, { outcome: 'success' });
+            span.setAttributes({ outcome: 'success' });
+          } catch (error) {
+            this.logger.error(
+              `Failed to generate and store final note: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            this.scheduleSessionCleanup(sessionId);
+            streamingSessionCompleted.add(1, { outcome: 'error' });
+            span.setStatus({ code: SpanStatusCode.ERROR });
+            span.setAttributes({ outcome: 'error', 'error.type': 'note_generation_failed' });
+            return {
+              outcome: 'note_failed' as const,
+              reason: error instanceof Error ? error.message : String(error),
+              noteId,
+            };
+          }
+
+          this.scheduleSessionCleanup(sessionId);
+          return { outcome: 'note_created' as const, noteId };
+        } catch (error) {
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          throw error;
+        }
+      },
+      { tracer },
+    );
   }
 
   private async endSessionWithoutNote(sessionId: string): Promise<void> {
@@ -190,7 +306,9 @@ export class StreamingService {
     try {
       await this.sonioxClient.cancelSession(sessionId);
     } catch (error) {
-      this.logger.error(`Failed to cancel Soniox session: ${error.message}`);
+      this.logger.error(
+        `Failed to cancel Soniox session: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     this.sessions.delete(sessionId);
   }
@@ -233,8 +351,9 @@ export class StreamingService {
 
       await this.sonioxClient.sendAudioChunk(session.sessionId, audioBuffer);
     } catch (error) {
-      console.error(`❌ Failed to send audio chunk to Soniox: ${error.message}`);
-      this.logger.error(`Failed to send audio chunk to Soniox: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`❌ Failed to send audio chunk to Soniox: ${message}`);
+      this.logger.error(`Failed to send audio chunk to Soniox: ${message}`);
     }
   }
 
@@ -346,7 +465,9 @@ export class StreamingService {
 
       if (session.isRecording) {
         this.sonioxClient.stopSession(sessionId).catch(error => {
-          this.logger.error(`Failed to stop Soniox session on disconnect: ${error.message}`);
+          this.logger.error(
+            `Failed to stop Soniox session on disconnect: ${error instanceof Error ? error.message : String(error)}`,
+          );
         });
       }
 
@@ -367,6 +488,11 @@ export class StreamingService {
   findClientIdBySessionId(sessionId: string): string | null {
     const session = this.sessions.get(sessionId);
     return session?.clientId || null;
+  }
+
+  /** Generate the clinical note via in-process AWS Bedrock. */
+  private async generateFinalNote(transcript: string): Promise<ParsedNote> {
+    return this.incrementalNoteService.generateFinalNote(transcript);
   }
 
   private async storeClinicalNote(
@@ -408,7 +534,9 @@ export class StreamingService {
         throw storeError;
       }
     } catch (error) {
-      this.logger.error(`Failed to store clinical note: ${error.message}`);
+      this.logger.error(
+        `Failed to store clinical note: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw error;
     }
   }
@@ -438,7 +566,9 @@ export class StreamingService {
     try {
       await this.sonioxClient.stopSession(sessionId);
     } catch (error) {
-      this.logger.error(`Failed to stop Soniox session: ${error.message}`);
+      this.logger.error(
+        `Failed to stop Soniox session: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     // Clean up session after a delay
@@ -462,7 +592,9 @@ export class StreamingService {
     try {
       await this.sonioxClient.cancelSession(sessionId);
     } catch (error) {
-      this.logger.error(`Failed to cancel Soniox session: ${error.message}`);
+      this.logger.error(
+        `Failed to cancel Soniox session: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     this.sessions.delete(sessionId);

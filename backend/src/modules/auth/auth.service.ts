@@ -9,11 +9,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { createHash, randomBytes } from 'crypto';
+import { SpanStatusCode } from '@opentelemetry/api';
 import { Doctor } from '../doctor/doctor.entity';
 import { Receptionist } from '../receptionist/receptionist.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
+import { authLoginAttempts, tracer, withSpan } from '../../otel-instruments';
 
 type AuthRole = 'doctor' | 'receptionist';
 
@@ -205,45 +207,69 @@ export class AuthService {
   }
 
   async login(email: string, password: string, accountType: AuthRole = 'doctor') {
-    if (accountType === 'receptionist') {
-      const receptionist = await this.validateReceptionistCredentials(email, password);
-      if (!receptionist) throw new UnauthorizedException('Invalid credentials');
+    return withSpan(
+      'auth.login',
+      async (span) => {
+        span.setAttributes({ 'auth.role': accountType });
+        try {
+          if (accountType === 'receptionist') {
+            const receptionist = await this.validateReceptionistCredentials(email, password);
+            if (!receptionist) throw new UnauthorizedException('Invalid credentials');
 
-      const payload: TokenUserPayload = {
-        sub: receptionist.id,
-        email: receptionist.email,
-        name: receptionist.fullName,
-        role: 'receptionist',
-        doctorId: receptionist.doctorId,
-      };
+            const payload: TokenUserPayload = {
+              sub: receptionist.id,
+              email: receptionist.email,
+              name: receptionist.fullName,
+              role: 'receptionist',
+              doctorId: receptionist.doctorId,
+            };
 
-      return this.issueTokenPair(payload, {
-        id: receptionist.id,
-        name: receptionist.fullName,
-        email: receptionist.email,
-        role: 'receptionist',
-        doctorId: receptionist.doctorId,
-      });
-    }
+            const result = await this.issueTokenPair(payload, {
+              id: receptionist.id,
+              name: receptionist.fullName,
+              email: receptionist.email,
+              role: 'receptionist',
+              doctorId: receptionist.doctorId,
+            });
+            authLoginAttempts.add(1, { outcome: 'success', 'auth.role': accountType });
+            span.setAttributes({ outcome: 'success' });
+            return result;
+          }
 
-    const doctor = await this.validateCredentials(email, password);
-    if (!doctor) throw new UnauthorizedException('Invalid credentials');
+          const doctor = await this.validateCredentials(email, password);
+          if (!doctor) throw new UnauthorizedException('Invalid credentials');
 
-    const payload: TokenUserPayload = {
-      sub: doctor.id,
-      email: doctor.email,
-      name: doctor.fullName,
-      role: 'doctor',
-    };
+          const payload: TokenUserPayload = {
+            sub: doctor.id,
+            email: doctor.email,
+            name: doctor.fullName,
+            role: 'doctor',
+          };
 
-    return this.issueTokenPair(payload, {
-      id: doctor.id,
-      name: doctor.fullName,
-      email: doctor.email,
-      specialization: doctor.specialization,
-      role: 'doctor',
-      doctorId: doctor.id,
-    });
+          const result = await this.issueTokenPair(payload, {
+            id: doctor.id,
+            name: doctor.fullName,
+            email: doctor.email,
+            specialization: doctor.specialization,
+            role: 'doctor',
+            doctorId: doctor.id,
+          });
+          authLoginAttempts.add(1, { outcome: 'success', 'auth.role': accountType });
+          span.setAttributes({ outcome: 'success' });
+          return result;
+        } catch (error) {
+          authLoginAttempts.add(1, { outcome: 'error', 'auth.role': accountType });
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          span.setAttributes({
+            outcome: 'error',
+            'error.type':
+              error instanceof UnauthorizedException ? 'invalid_credentials' : 'login_failed',
+          });
+          throw error;
+        }
+      },
+      { tracer },
+    );
   }
 
   async refresh(refreshToken: string) {

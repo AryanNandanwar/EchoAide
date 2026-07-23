@@ -16,7 +16,7 @@ type AuthSessionInput = {
 };
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
-const API_BASE = import.meta.env.VITE_REACT_APP_API_BASE_URL || "";
+const API_BASE = import.meta.env?.VITE_REACT_APP_API_BASE_URL ?? "";
 
 let refreshPromise: Promise<string | null> | null = null;
 
